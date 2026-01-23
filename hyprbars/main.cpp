@@ -150,6 +150,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:inactive_button_color", Hyprlang::INT{0}); // unset
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:on_double_click", Hyprlang::STRING{""});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:use_workspace_opacity", Hyprlang::INT{1});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:fullscreen_autohide_enabled", Hyprlang::INT{0});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:fullscreen_autohide_reveal_size", Hyprlang::INT{10});
+    HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:fullscreen_autohide_animation_duration", Hyprlang::INT{300});
 
     HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});
     static auto P4 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preConfigReload", [&](void* self, SCallbackInfo& info, std::any data) { onPreConfigReload(); });

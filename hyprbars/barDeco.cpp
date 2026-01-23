@@ -43,6 +43,12 @@ CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
 
     g_pAnimationManager->createAnimation(CHyprColor{**PCOLOR}, m_cRealBarColor, g_pConfigManager->getAnimationPropertyConfig("border"), pWindow, AVARDAMAGE_NONE);
     m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
+    
+    g_pAnimationManager->createAnimation(1.0f, m_fAutohideReveal, g_pConfigManager->getAnimationPropertyConfig("fade"), pWindow, AVARDAMAGE_NONE);
+    m_fAutohideReveal->setUpdateCallback([&](auto) { 
+        damageEntire(); 
+        g_pDecorationPositioner->repositionDeco(this);
+    });
 }
 
 CHyprBar::~CHyprBar() {
@@ -64,7 +70,20 @@ SDecorationPositioningInfo CHyprBar::getPositioningInfo() {
     info.edges          = DECORATION_EDGE_TOP;
     info.priority       = **PPRECEDENCE ? 10005 : 5000;
     info.reserved       = true;
-    info.desiredExtents = {{0, m_hidden || !**PENABLED ? 0 : **PHEIGHT}, {0, 0}};
+    
+    // Calculate effective height based on autohide reveal state
+    int effectiveHeight = 0;
+    if (!m_hidden && **PENABLED) {
+        if (m_bAutohideEnabled && m_bIsFullscreen) {
+            // In fullscreen with autohide: animate the height
+            effectiveHeight = (int)((**PHEIGHT) * m_fAutohideReveal->value());
+        } else {
+            // Normal mode: full height
+            effectiveHeight = **PHEIGHT;
+        }
+    }
+    
+    info.desiredExtents = {{0, effectiveHeight}, {0, 0}};
     return info;
 }
 
@@ -146,6 +165,9 @@ void CHyprBar::onTouchUp(SCallbackInfo& info, ITouch::SUpEvent e) {
 }
 
 void CHyprBar::onMouseMove(Vector2D coords) {
+    // Update autohide state based on pointer position
+    updateAutohideState();
+    
     // ensure proper redraws of button icons on hover when using hardware cursors
     static auto* const PICONONHOVER = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:icon_on_hover")->getDataStaticPtr();
     if (**PICONONHOVER)
@@ -580,6 +602,9 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     if (!PWINDOW->m_ruleApplicator->decorate().valueOrDefault())
         return;
 
+    // Update autohide state to handle fullscreen changes
+    updateAutohideState();
+
     static auto* const PUSEWORKSPACEOPACITY =
         (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:use_workspace_opacity")
             ->getDataStaticPtr();
@@ -592,6 +617,15 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     if (useWorkspaceOpacity) {
         renderAlpha = currentWorkspaceOpacity;
     }
+    
+    // Apply autohide alpha if in fullscreen with autohide enabled
+    if (m_bAutohideEnabled && m_bIsFullscreen) {
+        renderAlpha *= m_fAutohideReveal->value();
+    }
+    
+    // Don't render if effectively invisible
+    if (renderAlpha < 0.01f)
+        return;
     
     CBarPassElement::SBarData data{this, renderAlpha};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CBarPassElement>(data));
@@ -732,6 +766,7 @@ eDecorationType CHyprBar::getDecorationType() {
 }
 
 void CHyprBar::updateWindow(PHLWINDOW pWindow) {
+    updateAutohideState();
     damageEntire();
 }
 
@@ -814,5 +849,68 @@ void CHyprBar::damageOnButtonHover() {
         }
 
         offset += **PBARBUTTONPADDING + b.size;
+    }
+}
+
+bool CHyprBar::isWindowFullscreen() {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!validMapped(PWINDOW))
+        return false;
+    
+    return PWINDOW->isFullscreen();
+}
+
+bool CHyprBar::isPointerInRevealRegion() {
+    static auto* const PREVEALSIZE = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:fullscreen_autohide_reveal_size")->getDataStaticPtr();
+    
+    const auto PWINDOW = m_pWindow.lock();
+    if (!validMapped(PWINDOW))
+        return false;
+    
+    const auto MOUSECOORDS = g_pInputManager->getMouseCoordsInternal();
+    const auto WINDOWBOX = PWINDOW->m_realPosition->value();
+    const auto WINDOWSIZE = PWINDOW->m_realSize->value();
+    
+    // Check if pointer is within the reveal region at the top of the window
+    return MOUSECOORDS.x >= WINDOWBOX.x && 
+           MOUSECOORDS.x <= WINDOWBOX.x + WINDOWSIZE.x &&
+           MOUSECOORDS.y >= WINDOWBOX.y && 
+           MOUSECOORDS.y <= WINDOWBOX.y + **PREVEALSIZE;
+}
+
+void CHyprBar::updateAutohideState() {
+    static auto* const PAUTOHIDE = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:fullscreen_autohide_enabled")->getDataStaticPtr();
+    static auto* const PENABLED = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:enabled")->getDataStaticPtr();
+    
+    if (!**PENABLED || !**PAUTOHIDE) {
+        // If autohide is disabled or bar is disabled, ensure reveal is at 1.0
+        if (m_fAutohideReveal->goal() != 1.0f) {
+            *m_fAutohideReveal = 1.0f;
+        }
+        m_bAutohideEnabled = false;
+        return;
+    }
+    
+    m_bAutohideEnabled = true;
+    m_bIsFullscreen = isWindowFullscreen();
+    
+    if (!m_bIsFullscreen) {
+        // Not fullscreen: always show the bar
+        if (m_fAutohideReveal->goal() != 1.0f) {
+            *m_fAutohideReveal = 1.0f;
+        }
+        m_bAutohideBarRevealed = true;
+        return;
+    }
+    
+    // Fullscreen: check if pointer is in reveal region
+    m_bPointerInRevealRegion = isPointerInRevealRegion();
+    
+    bool shouldReveal = m_bPointerInRevealRegion;
+    float targetReveal = shouldReveal ? 1.0f : 0.0f;
+    
+    if (m_fAutohideReveal->goal() != targetReveal) {
+        *m_fAutohideReveal = targetReveal;
+        m_bAutohideBarRevealed = shouldReveal;
     }
 }

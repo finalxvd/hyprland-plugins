@@ -68,6 +68,12 @@ class CHyprBar : public IHyprWindowDecoration {
     Time::steady_tp           m_lastMouseDown = Time::steadyNow();
 
     PHLANIMVAR<CHyprColor>    m_cRealBarColor;
+    PHLANIMVAR<float>         m_fAutohideReveal;
+
+    bool                      m_bAutohideEnabled           = false;
+    bool                      m_bIsFullscreen              = false;
+    bool                      m_bPointerInRevealRegion     = false;
+    bool                      m_bAutohideBarRevealed       = false;
 
     Vector2D                  cursorRelativeToBar();
 
@@ -84,6 +90,10 @@ class CHyprBar : public IHyprWindowDecoration {
     void                      onTouchUp(SCallbackInfo& info, ITouch::SUpEvent e);
     void                      onMouseMove(Vector2D coords);
     void                      onTouchMove(SCallbackInfo& info, ITouch::SMotionEvent e);
+
+    void                      updateAutohideState();
+    bool                      isWindowFullscreen();
+    bool                      isPointerInRevealRegion();
 
     void                      handleDownEvent(SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
     void                      handleUpEvent(SCallbackInfo& info);

@@ -44,6 +44,26 @@ plugin {
 `icon_on_hover` | bool | whether the icons show on mouse hovering over the buttons | `false`
 `inactive_button_color` | col | buttons bg color when window isn't focused
 `on_double_click` | str | command to run on double click of the bar (not on a button)
+`fullscreen_autohide_enabled` | bool | whether to autohide the bar in fullscreen mode | `false`
+`fullscreen_autohide_reveal_size` | int | size of the reveal region at the top of the window (in pixels) | `10`
+`fullscreen_autohide_animation_duration` | int | duration of the reveal/hide animation (in milliseconds) | `300`
+
+## Fullscreen Autohide
+
+When `fullscreen_autohide_enabled` is set to `true`, the bar will automatically hide when a window is in fullscreen mode. Moving the pointer to the top edge of the window (within the `fullscreen_autohide_reveal_size` region) will reveal the bar with a smooth animation.
+
+In non-fullscreen (windowed) mode, the bar remains visible at all times regardless of this setting.
+
+Example configuration:
+```ini
+plugin {
+    hyprbars {
+        fullscreen_autohide_enabled = true
+        fullscreen_autohide_reveal_size = 15
+        fullscreen_autohide_animation_duration = 250
+    }
+}
+```
 
 ## Buttons Config
 
