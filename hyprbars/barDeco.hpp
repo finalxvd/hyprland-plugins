@@ -74,6 +74,7 @@ class CHyprBar : public IHyprWindowDecoration {
     bool                      m_bIsFullscreen              = false;
     bool                      m_bPointerInRevealRegion     = false;
     bool                      m_bAutohideBarRevealed       = false;
+    float                     m_fLastRevealValue           = 1.0f;
 
     Vector2D                  cursorRelativeToBar();
 

@@ -46,8 +46,30 @@ CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     
     g_pAnimationManager->createAnimation(1.0f, m_fAutohideReveal, g_pConfigManager->getAnimationPropertyConfig("fade"), pWindow, AVARDAMAGE_NONE);
     m_fAutohideReveal->setUpdateCallback([&](auto) { 
-        damageEntire(); 
-        g_pDecorationPositioner->repositionDeco(this);
+        damageEntire();
+        // Reposition when transitioning or when animation completes
+        float currentValue = m_fAutohideReveal->value();
+        bool needsReposition = false;
+        
+        // Check if we crossed visibility threshold
+        bool wasVisible = m_fLastRevealValue > 0.01f;
+        bool isVisible = currentValue > 0.01f;
+        if (wasVisible != isVisible) {
+            needsReposition = true;
+        }
+        
+        // Also reposition when animation finishes to ensure correct final state
+        bool wasAnimating = std::abs(m_fLastRevealValue - m_fAutohideReveal->goal()) > 0.01f;
+        bool isAnimating = std::abs(currentValue - m_fAutohideReveal->goal()) > 0.01f;
+        if (wasAnimating && !isAnimating) {
+            needsReposition = true;
+        }
+        
+        if (needsReposition) {
+            g_pDecorationPositioner->repositionDeco(this);
+        }
+        
+        m_fLastRevealValue = currentValue;
     });
 }
 
