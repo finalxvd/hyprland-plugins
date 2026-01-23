@@ -16,6 +16,9 @@
 #include "globals.hpp"
 #include "BarPassElement.hpp"
 
+// Autohide visibility threshold for optimization
+constexpr float AUTOHIDE_VISIBILITY_THRESHOLD = 0.01f;
+
 CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     m_pWindow = pWindow;
 
@@ -52,15 +55,15 @@ CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
         bool needsReposition = false;
         
         // Check if we crossed visibility threshold
-        bool wasVisible = m_fLastRevealValue > 0.01f;
-        bool isVisible = currentValue > 0.01f;
+        bool wasVisible = m_fLastRevealValue > AUTOHIDE_VISIBILITY_THRESHOLD;
+        bool isVisible = currentValue > AUTOHIDE_VISIBILITY_THRESHOLD;
         if (wasVisible != isVisible) {
             needsReposition = true;
         }
         
         // Also reposition when animation finishes to ensure correct final state
-        bool wasAnimating = std::abs(m_fLastRevealValue - m_fAutohideReveal->goal()) > 0.01f;
-        bool isAnimating = std::abs(currentValue - m_fAutohideReveal->goal()) > 0.01f;
+        bool wasAnimating = std::abs(m_fLastRevealValue - m_fAutohideReveal->goal()) > AUTOHIDE_VISIBILITY_THRESHOLD;
+        bool isAnimating = std::abs(currentValue - m_fAutohideReveal->goal()) > AUTOHIDE_VISIBILITY_THRESHOLD;
         if (wasAnimating && !isAnimating) {
             needsReposition = true;
         }
@@ -646,7 +649,7 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     }
     
     // Don't render if effectively invisible
-    if (renderAlpha < 0.01f)
+    if (renderAlpha < AUTOHIDE_VISIBILITY_THRESHOLD)
         return;
     
     CBarPassElement::SBarData data{this, renderAlpha};
