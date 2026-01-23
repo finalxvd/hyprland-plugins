@@ -929,6 +929,20 @@ void CHyprBar::updateAutohideState() {
     }
     
     // Fullscreen: check if pointer is in reveal region
+    // Only update reveal state if this is the focused window or if pointer is actually within window bounds
+    const auto PWINDOW = m_pWindow.lock();
+    if (!validMapped(PWINDOW))
+        return;
+    
+    auto focusState = Desktop::focusState();
+    auto focusedWindow = focusState->window();
+    
+    // Only process autohide if this is the focused window (or the window under cursor in fullscreen)
+    if (PWINDOW != focusedWindow) {
+        // Not the focused window - keep current state
+        return;
+    }
+    
     m_bPointerInRevealRegion = isPointerInRevealRegion();
     
     bool shouldReveal = m_bPointerInRevealRegion;
