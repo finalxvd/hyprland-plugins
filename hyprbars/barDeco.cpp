@@ -935,6 +935,9 @@ void CHyprBar::updateAutohideState() {
         return;
     
     auto focusState = Desktop::focusState();
+    if (!focusState)
+        return;
+    
     auto focusedWindow = focusState->window();
     
     // Only process autohide if this is the focused window
