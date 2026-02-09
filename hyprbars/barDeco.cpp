@@ -55,18 +55,19 @@ CHyprBar::~CHyprBar() {
 }
 
 SDecorationPositioningInfo CHyprBar::getPositioningInfo() {
-    static auto* const         PHEIGHT     = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:bar_height")->getDataStaticPtr();
-    static auto* const         PENABLED    = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:enabled")->getDataStaticPtr();
-    static auto* const         PPRECEDENCE = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:bar_precedence_over_border")->getDataStaticPtr();
+    static auto* const PHEIGHT     = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:bar_height")->getDataStaticPtr();
+    static auto* const PENABLED    = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:enabled")->getDataStaticPtr();
+    static auto* const PPRECEDENCE = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:bar_precedence_over_border")->getDataStaticPtr();
 
     SDecorationPositioningInfo info;
-    info.policy         = m_hidden ? DECORATION_POSITION_ABSOLUTE : DECORATION_POSITION_STICKY;
+    info.policy         = (m_hidden || m_bAutohidden) ? DECORATION_POSITION_ABSOLUTE : DECORATION_POSITION_STICKY;
     info.edges          = DECORATION_EDGE_TOP;
     info.priority       = **PPRECEDENCE ? 10005 : 5000;
     info.reserved       = true;
-    info.desiredExtents = {{0, m_hidden || !**PENABLED ? 0 : **PHEIGHT}, {0, 0}};
+    info.desiredExtents = {{0, (m_hidden || m_bAutohidden || !**PENABLED) ? 0 : **PHEIGHT}, {0, 0}};
     return info;
 }
+
 
 void CHyprBar::onPositioningReply(const SDecorationPositioningReply& reply) {
     if (reply.assignedGeometry.size() != m_bAssignedBox.size())
@@ -85,6 +86,7 @@ bool CHyprBar::inputIsValid() {
     if (!**PENABLED)
         return false;
 
+    // Allow input even when autohidden so hover can trigger unhide
     if (!m_pWindow->m_workspace || !m_pWindow->m_workspace->isVisible() || !g_pInputManager->m_exclusiveLSes.empty() ||
         (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->wlSurface()->resource())))
         return false;
@@ -118,6 +120,7 @@ bool CHyprBar::inputIsValid() {
     return true;
 }
 
+
 void CHyprBar::onMouseButton(SCallbackInfo& info, IPointer::SButtonEvent e) {
     if (!inputIsValid())
         return;
@@ -145,9 +148,133 @@ void CHyprBar::onTouchUp(SCallbackInfo& info, ITouch::SUpEvent e) {
     handleUpEvent(info);
 }
 
+void CHyprBar::updateAutohideState() {
+    static auto* const PAUTOHIDE = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:autohide_bar")->getDataStaticPtr();
+    static auto* const PDELAY = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:autohide_delay_ms")->getDataStaticPtr();
+    static auto* const PTRIGGER = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:autohide_trigger_ms")->getDataStaticPtr();
+    
+    if (!PAUTOHIDE || !**PAUTOHIDE)
+        return;
+    
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return;
+    
+    bool prevAutohidden = m_bAutohidden;
+    
+    // Check if we should autohide (not in floating/windowed mode)
+    if (shouldAutohide()) {
+        const auto delayMs = PDELAY ? **PDELAY : 800;
+        const auto triggerMs = PTRIGGER ? **PTRIGGER : 200;
+        
+        if (m_bHoveringBar) {
+            // Currently hovering
+            if (m_bHoverTriggered) {
+                // Already triggered - keep showing
+                m_bAutohidden = false;
+            } else {
+                // Check if we've been hovering long enough to trigger
+                const auto timeSinceEnter = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - m_tHoverEnter).count();
+                
+                if (timeSinceEnter >= triggerMs) {
+                    // Hover time threshold reached - show bar
+                    m_bHoverTriggered = true;
+                    m_bAutohidden = false;
+                } else {
+                    // Still waiting for trigger time - keep hidden
+                    m_bAutohidden = true;
+                    // Request another update to check again
+                    damageEntire();
+                }
+            }
+        } else {
+            // Not hovering anymore
+            if (m_bHoverTriggered) {
+                // Bar was shown, now check delay time
+                const auto timeSinceLeave = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - m_tLastHoverLeave).count();
+                
+                if (timeSinceLeave < delayMs) {
+                    // Recently left hover area - keep visible
+                    m_bAutohidden = false;
+                    // Request another update soon to hide after delay
+                    damageEntire();
+                } else {
+                    // Time expired - hide bar and reset trigger
+                    m_bAutohidden = true;
+                    m_bHoverTriggered = false;
+                }
+            } else {
+                // Never triggered - stay hidden
+                m_bAutohidden = true;
+            }
+        }
+    } else {
+        // Don't autohide in floating mode
+        m_bAutohidden = false;
+        m_bHoverTriggered = false;
+    }
+    
+    // Request repositioning if state changed
+    if (prevAutohidden != m_bAutohidden) {
+        const auto PMONITOR = PWINDOW->m_monitor.lock();
+        if (PMONITOR)
+            PMONITOR->m_scheduledRecalc = true;
+        g_pDecorationPositioner->repositionDeco(this);
+        damageEntire();
+    }
+}
+
+bool CHyprBar::shouldAutohide() {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return false;
+    
+    // Don't autohide if window is floating (windowed mode)
+    return !PWINDOW->m_isFloating;
+}
+
 void CHyprBar::onMouseMove(Vector2D coords) {
-    // ensure proper redraws of button icons on hover when using hardware cursors
+    static auto* const PHEIGHT = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:bar_height")->getDataStaticPtr();
     static auto* const PICONONHOVER = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:icon_on_hover")->getDataStaticPtr();
+    static auto* const PAUTOHIDE = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:autohide_bar")->getDataStaticPtr();
+    static auto* const PMARGINMULT = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:autohide_margin_multiplier")->getDataStaticPtr();
+    
+    // Check if hovering over bar area for autohide
+    if (PAUTOHIDE && **PAUTOHIDE && shouldAutohide()) {
+        const auto PWINDOW = m_pWindow.lock();
+        if (PWINDOW && validMapped(PWINDOW)) {
+            const auto mouseGlobal = g_pInputManager->getMouseCoordsInternal();
+            const auto windowTop = PWINDOW->m_realPosition->value().y;
+            const auto windowLeft = PWINDOW->m_realPosition->value().x;
+            const auto windowRight = windowLeft + PWINDOW->m_realSize->value().x;
+            
+            // Configurable hover area: multiplier x bar height for easier triggering
+            const int marginMult = PMARGINMULT ? **PMARGINMULT : 3;
+            const int hoverMargin = **PHEIGHT * marginMult;
+            
+            // Hovering if within extended area from top of window
+            bool nowHovering = (mouseGlobal.y >= windowTop && 
+                               mouseGlobal.y <= windowTop + hoverMargin &&
+                               mouseGlobal.x >= windowLeft && 
+                               mouseGlobal.x <= windowRight);
+            
+            if (nowHovering != m_bHoveringBar) {
+                m_bHoveringBar = nowHovering;
+                if (nowHovering) {
+                    // Just entered hover area - record entry time
+                    m_tHoverEnter = std::chrono::steady_clock::now();
+                } else {
+                    // Just left hover area - record leave time
+                    m_tLastHoverLeave = std::chrono::steady_clock::now();
+                }
+                updateAutohideState();
+            }
+        }
+    }
+    
+    // ensure proper redraws of button icons on hover when using hardware cursors
     if (**PICONONHOVER)
         damageOnButtonHover();
 
@@ -157,6 +284,7 @@ void CHyprBar::onMouseMove(Vector2D coords) {
     m_bDragPending = false;
     handleMovement();
 }
+
 
 void CHyprBar::onTouchMove(SCallbackInfo& info, ITouch::SMotionEvent e) {
     if (!m_bDragPending || !m_bTouchEv || !validMapped(m_pWindow) || e.touchID != m_touchId)
@@ -207,7 +335,6 @@ void CHyprBar::handleDownEvent(SCallbackInfo& info, std::optional<ITouch::SDownE
             if (m_bTouchEv)
                 g_pKeybindManager->m_dispatchers["settiled"]("activewindow");
             g_pKeybindManager->m_dispatchers["mouse"]("0movewindow");
-            Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)PWINDOW.get());
         }
 
         m_bDraggingThis = false;
@@ -253,7 +380,6 @@ void CHyprBar::handleUpEvent(SCallbackInfo& info) {
         if (m_bTouchEv)
             g_pKeybindManager->m_dispatchers["settiled"]("activewindow");
 
-        Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
     }
 
     m_bDragPending = false;
@@ -264,7 +390,6 @@ void CHyprBar::handleUpEvent(SCallbackInfo& info) {
 void CHyprBar::handleMovement() {
     g_pKeybindManager->m_dispatchers["mouse"]("1movewindow");
     m_bDraggingThis = true;
-    Log::logger->log(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
     return;
 }
 
@@ -573,29 +698,39 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     }
     if (!PENABLED || !*PENABLED || !**PENABLED)
         return;
-    if (m_hidden || !validMapped(m_pWindow))
+
+    // Update autohide state
+    updateAutohideState();
+
+    if ((m_hidden || m_bAutohidden) || !validMapped(m_pWindow))
         return;
+
     const auto PWINDOW = m_pWindow.lock();
-
-    if (!PWINDOW->m_ruleApplicator->decorate().valueOrDefault())
+    if (!PWINDOW)
         return;
 
-    static auto* const PUSEWORKSPACEOPACITY =
-        (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:hyprbars:use_workspace_opacity")
-            ->getDataStaticPtr();
+    if (!PWINDOW->m_ruleApplicator ||
+        !PWINDOW->m_ruleApplicator->decorate().valueOrDefault())
+        return;
 
-    bool useWorkspaceOpacity = (PUSEWORKSPACEOPACITY && *PUSEWORKSPACEOPACITY && **PUSEWORKSPACEOPACITY == 1);
-    
-    float currentWorkspaceOpacity = PWINDOW->m_workspace->m_alpha->value();
-    
     float renderAlpha = a;
-    if (useWorkspaceOpacity) {
-        renderAlpha = currentWorkspaceOpacity;
+
+    static Hyprlang::INT* const* PUSEWORKSPACEOPACITY = nullptr;
+    if (!PUSEWORKSPACEOPACITY && PHANDLE) {
+        if (auto val = HyprlandAPI::getConfigValue(
+                PHANDLE, "plugin:hyprbars:use_workspace_opacity"))
+            PUSEWORKSPACEOPACITY = (Hyprlang::INT* const*)val->getDataStaticPtr();
     }
-    
+
+    if (PUSEWORKSPACEOPACITY && *PUSEWORKSPACEOPACITY && **PUSEWORKSPACEOPACITY == 1) {
+        if (PWINDOW->m_workspace && PWINDOW->m_workspace->m_alpha)
+            renderAlpha = PWINDOW->m_workspace->m_alpha->value();
+    }
+
     CBarPassElement::SBarData data{this, renderAlpha};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CBarPassElement>(data));
 }
+
 
 void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     const auto         PWINDOW = m_pWindow.lock();
