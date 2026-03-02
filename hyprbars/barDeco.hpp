@@ -9,11 +9,16 @@
 #include <hyprland/src/desktop/rule/windowRule/WindowRule.hpp>
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
+#include <hyprland/src/helpers/signal/Signal.hpp>
 #include "globals.hpp"
 
 #define private public
 #include <hyprland/src/managers/input/InputManager.hpp>
 #undef private
+
+namespace Event {
+    struct SCallbackInfo;
+}
 
 class CHyprBar : public IHyprWindowDecoration {
   public:
@@ -88,25 +93,25 @@ class CHyprBar : public IHyprWindowDecoration {
     void                      damageOnButtonHover();
 
     bool                      inputIsValid();
-    void                      onMouseButton(SCallbackInfo& info, IPointer::SButtonEvent e);
-    void                      onTouchDown(SCallbackInfo& info, ITouch::SDownEvent e);
-    void                      onTouchUp(SCallbackInfo& info, ITouch::SUpEvent e);
+    void                      onMouseButton(Event::SCallbackInfo& info, IPointer::SButtonEvent e);
+    void                      onTouchDown(Event::SCallbackInfo& info, ITouch::SDownEvent e);
+    void                      onTouchUp(Event::SCallbackInfo& info, ITouch::SUpEvent e);
     void                      onMouseMove(Vector2D coords);
-    void                      onTouchMove(SCallbackInfo& info, ITouch::SMotionEvent e);
+    void                      onTouchMove(Event::SCallbackInfo& info, ITouch::SMotionEvent e);
 
-    void                      handleDownEvent(SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
-    void                      handleUpEvent(SCallbackInfo& info);
+    void                      handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent);
+    void                      handleUpEvent(Event::SCallbackInfo& info);
     void                      handleMovement();
     bool doButtonPress(Hyprlang::INT* const* PBARPADDING, Hyprlang::INT* const* PBARBUTTONPADDING, Hyprlang::INT* const* PHEIGHT, Vector2D COORDS, bool BUTTONSRIGHT);
 
     CBox assignedBoxGlobal();
 
-    SP<HOOK_CALLBACK_FN> m_pMouseButtonCallback;
-    SP<HOOK_CALLBACK_FN> m_pTouchDownCallback;
-    SP<HOOK_CALLBACK_FN> m_pTouchUpCallback;
+    CHyprSignalListener m_pMouseButtonCallback;
+    CHyprSignalListener m_pTouchDownCallback;
+    CHyprSignalListener m_pTouchUpCallback;
 
-    SP<HOOK_CALLBACK_FN> m_pTouchMoveCallback;
-    SP<HOOK_CALLBACK_FN> m_pMouseMoveCallback;
+    CHyprSignalListener m_pTouchMoveCallback;
+    CHyprSignalListener m_pMouseMoveCallback;
 
     std::string          m_szLastTitle;
 

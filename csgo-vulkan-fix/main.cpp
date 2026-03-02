@@ -9,6 +9,7 @@
 #include <hyprland/src/xwayland/XSurface.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 
 #include "globals.hpp"
 
@@ -47,10 +48,10 @@ static const SAppConfig* getAppConfig(const std::string& appClass) {
 void hkNotifyMotion(CSeatManager* thisptr, uint32_t time_msec, const Vector2D& local) {
     static auto* const PFIX = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:csgo-vulkan-fix:fix_mouse")->getDataStaticPtr();
 
-    Vector2D newCoords = local;
-    auto focusState = Desktop::focusState();
-    auto window = focusState->window();
-    auto monitor = focusState->monitor();
+    Vector2D           newCoords  = local;
+    auto               focusState = Desktop::focusState();
+    auto               window     = focusState->window();
+    auto               monitor    = focusState->monitor();
 
     const auto CONFIG = window && monitor ? getAppConfig(window->m_initialClass) : nullptr;
 
@@ -125,7 +126,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:csgo-vulkan-fix:fix_mouse", Hyprlang::INT{1});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:csgo-vulkan-fix:class", Hyprlang::STRING{"cs2"});
 
-    static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preConfigReload", [&](void* self, SCallbackInfo& info, std::any data) {
+    static auto P = Event::bus()->m_events.config.preReload.listen([&] {
         g_appConfigs.clear();
 
         static auto* const RESX   = (Hyprlang::INT* const*)HyprlandAPI::getConfigValue(PHANDLE, "plugin:csgo-vulkan-fix:res_w")->getDataStaticPtr();

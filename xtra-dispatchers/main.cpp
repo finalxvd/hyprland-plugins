@@ -29,9 +29,9 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 static SDispatchResult moveOrExec(std::string in) {
     CVarList vars(in, 0, ',');
 
-    auto focusState = Desktop::focusState();
-    auto monitor = focusState->monitor();
-    
+    auto     focusState = Desktop::focusState();
+    auto     monitor    = focusState->monitor();
+
     if (!monitor || !monitor->m_activeWorkspace)
         return SDispatchResult{.success = false, .error = "No active workspace"};
 
@@ -44,7 +44,7 @@ static SDispatchResult moveOrExec(std::string in) {
             g_pCompositor->moveWindowToWorkspaceSafe(PWINDOW, monitor->m_activeWorkspace);
         else
             g_pCompositor->warpCursorTo(PWINDOW->middle());
-        focusState->fullWindowFocus(PWINDOW);
+        focusState->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_KEYBIND);
     }
 
     return SDispatchResult{};
@@ -57,7 +57,7 @@ static SDispatchResult throwUnfocused(std::string in) {
         return SDispatchResult{.success = false, .error = "Failed to find workspace"};
 
     auto focusState = Desktop::focusState();
-    auto window = focusState->window();
+    auto window     = focusState->window();
 
     if (!window || !window->m_workspace)
         return SDispatchResult{.success = false, .error = "No valid last window"};
@@ -83,9 +83,9 @@ static SDispatchResult bringAllFrom(std::string in) {
         return SDispatchResult{.success = false, .error = "Failed to find workspace"};
 
     auto focusState = Desktop::focusState();
-    auto monitor = focusState->monitor();
-    auto window = focusState->window();
-    
+    auto monitor    = focusState->monitor();
+    auto window     = focusState->window();
+
     if (!monitor || !monitor->m_activeWorkspace)
         return SDispatchResult{.success = false, .error = "No active monitor"};
 
@@ -103,7 +103,7 @@ static SDispatchResult bringAllFrom(std::string in) {
     }
 
     if (PLASTWINDOW) {
-        Desktop::focusState()->fullWindowFocus(PLASTWINDOW);
+        Desktop::focusState()->fullWindowFocus(PLASTWINDOW, Desktop::FOCUS_REASON_KEYBIND);
         g_pCompositor->warpCursorTo(PLASTWINDOW->middle());
     }
 
@@ -111,10 +111,10 @@ static SDispatchResult bringAllFrom(std::string in) {
 }
 
 static SDispatchResult closeUnfocused(std::string in) {
-	auto focusState = Desktop::focusState();
-	auto monitor = focusState->monitor();
-	auto window = focusState->window();
-	
+    auto focusState = Desktop::focusState();
+    auto monitor    = focusState->monitor();
+    auto window     = focusState->window();
+
     if (!window)
         return SDispatchResult{.success = false, .error = "No focused monitor"};
 
