@@ -8,6 +8,7 @@
 #include <hyprland/src/config/ConfigManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleEffectContainer.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 
 #include <algorithm>
 
@@ -19,32 +20,16 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
     return HYPRLAND_API_VERSION;
 }
 
-static void onNewWindow(void* self, std::any data) {
-    // data is guaranteed
-    const auto PWINDOW = std::any_cast<PHLWINDOW>(data);
-
-    if (!PWINDOW->m_X11DoesntWantBorders) {
-        if (std::ranges::any_of(PWINDOW->m_windowDecorations, [](const auto& d) { return d->getDisplayName() == "Hyprbar"; }))
+static void onNewWindow(PHLWINDOW window) {
+    if (!window->m_X11DoesntWantBorders) {
+        if (std::ranges::any_of(window->m_windowDecorations, [](const auto& d) { return d->getDisplayName() == "Hyprbar"; }))
             return;
 
-        auto bar = makeUnique<CHyprBar>(PWINDOW);
+        auto bar = makeUnique<CHyprBar>(window);
         g_pGlobalState->bars.emplace_back(bar);
         bar->m_self = bar;
-        HyprlandAPI::addWindowDecoration(PHANDLE, PWINDOW, std::move(bar));
+        HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(bar));
     }
-}
-
-static void onCloseWindow(void* self, std::any data) {
-    // data is guaranteed
-    const auto PWINDOW = std::any_cast<PHLWINDOW>(data);
-
-    const auto BARIT = std::find_if(g_pGlobalState->bars.begin(), g_pGlobalState->bars.end(), [PWINDOW](const auto& bar) { return bar->getOwner() == PWINDOW; });
-
-    if (BARIT == g_pGlobalState->bars.end())
-        return;
-
-    // we could use the API but this is faster + it doesn't matter here that much.
-    PWINDOW->removeWindowDeco(BARIT->get());
 }
 
 static void onPreConfigReload() {
@@ -127,10 +112,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pGlobalState->barColorRuleIdx   = Desktop::Rule::windowEffects()->registerEffect("hyprbars:bar_color");
     g_pGlobalState->titleColorRuleIdx = Desktop::Rule::windowEffects()->registerEffect("hyprbars:title_color");
 
-    static auto P = HyprlandAPI::registerCallbackDynamic(PHANDLE, "openWindow", [&](void* self, SCallbackInfo& info, std::any data) { onNewWindow(self, data); });
-    // static auto P2 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "closeWindow", [&](void* self, SCallbackInfo& info, std::any data) { onCloseWindow(self, data); });
-    static auto P3 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "windowUpdateRules",
-                                                          [&](void* self, SCallbackInfo& info, std::any data) { onUpdateWindowRules(std::any_cast<PHLWINDOW>(data)); });
+    static auto P = Event::bus()->m_events.window.open.listen([&](PHLWINDOW w) { onNewWindow(w); });
+    static auto P3 = Event::bus()->m_events.window.updateRules.listen([&](PHLWINDOW w) { onUpdateWindowRules(w); });
 
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_color", Hyprlang::INT{*configStringToInt("rgba(33333388)")});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:bar_height", Hyprlang::INT{15});
@@ -156,14 +139,14 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprbars:autohide_trigger_ms", Hyprlang::INT{200});
 
     HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});
-    static auto P4 = HyprlandAPI::registerCallbackDynamic(PHANDLE, "preConfigReload", [&](void* self, SCallbackInfo& info, std::any data) { onPreConfigReload(); });
+    static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
 
     // add deco to existing windows
     for (auto& w : g_pCompositor->m_windows) {
         if (w->isHidden() || !w->m_isMapped)
             continue;
 
-        onNewWindow(nullptr /* unused */, std::any(w));
+        onNewWindow(w);
     }
 
     HyprlandAPI::reloadConfig();

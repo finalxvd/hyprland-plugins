@@ -210,7 +210,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
 
     lastMousePosLocal = g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
 
-    auto onCursorMove = [this](void* self, SCallbackInfo& info, std::any param) {
+    auto onCursorMove = [this](Vector2D p, Event::SCallbackInfo& info) {
         if (closing)
             return;
 
@@ -218,7 +218,7 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
         lastMousePosLocal = g_pInputManager->getMouseCoordsInternal() - pMonitor->m_position;
     };
 
-    auto onCursorSelect = [this](void* self, SCallbackInfo& info, std::any param) {
+    auto onCursorSelect = [this](auto e, Event::SCallbackInfo& info) {
         if (closing)
             return;
 
@@ -229,11 +229,11 @@ COverview::COverview(PHLWORKSPACE startedOn_, bool swipe_) : startedOn(startedOn
         close();
     };
 
-    mouseMoveHook = g_pHookSystem->hookDynamic("mouseMove", onCursorMove);
-    touchMoveHook = g_pHookSystem->hookDynamic("touchMove", onCursorMove);
+    mouseMoveHook = Event::bus()->m_events.input.mouse.move.listen(onCursorMove);
+    touchMoveHook = Event::bus()->m_events.input.touch.motion.listen([this, onCursorMove](ITouch::SMotionEvent e, Event::SCallbackInfo& info) { onCursorMove({}, info); });
 
-    mouseButtonHook = g_pHookSystem->hookDynamic("mouseButton", onCursorSelect);
-    touchDownHook   = g_pHookSystem->hookDynamic("touchDown", onCursorSelect);
+    mouseButtonHook = Event::bus()->m_events.input.mouse.button.listen(onCursorSelect);
+    touchDownHook   = Event::bus()->m_events.input.touch.down.listen(onCursorSelect);
 }
 
 void COverview::selectHoveredWorkspace() {

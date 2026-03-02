@@ -13,8 +13,9 @@
 #include <hyprland/src/helpers/AnimatedVariable.hpp>
 #include <hyprland/src/managers/animation/AnimationManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
-#include <hyprland/src/managers/LayoutManager.hpp>
+#include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/event/EventBus.hpp>
 #undef private
 
 #include "globals.hpp"
@@ -85,7 +86,7 @@ static void onFocusChange(PHLWINDOW window) {
                 *w->m_realPosition = ORIGINAL.pos();
                 *w->m_realSize     = ORIGINAL.size();
             } else
-                g_pLayoutManager->getCurrentLayout()->recalculateWindow(w.lock());
+                w->layoutTarget()->recalc();
 
             w->m_realSize->setCallbackOnEnd(nullptr);
         });
@@ -104,7 +105,7 @@ static void onFocusChange(PHLWINDOW window) {
             if (w->m_isFloating || w->isFullscreen())
                 *w->m_realPosition = ORIGINAL;
             else
-                g_pLayoutManager->getCurrentLayout()->recalculateWindow(w.lock());
+                w->layoutTarget()->recalc();
 
             w->m_realPosition->setCallbackOnEnd(nullptr);
         });
@@ -123,9 +124,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("[hww] Version mismatch");
     }
 
-    // clang-format off
-    static auto P  = HyprlandAPI::registerCallbackDynamic(PHANDLE, "activeWindow", [&](void* self, SCallbackInfo& info, std::any data) { onFocusChange(std::any_cast<PHLWINDOW>(data)); });
-    // clang-format on
+    static auto P = Event::bus()->m_events.window.active.listen([&](PHLWINDOW w, Desktop::eFocusReason r) { onFocusChange(w); });
 
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprfocus:mode", Hyprlang::STRING{"flash"});
     HyprlandAPI::addConfigValue(PHANDLE, "plugin:hyprfocus:only_on_monitor_change", Hyprlang::INT{0});
