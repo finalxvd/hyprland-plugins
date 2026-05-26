@@ -46,6 +46,10 @@ plugin {
 `icon_on_hover` | bool | whether the icons show on mouse hovering over the buttons | `false`
 `inactive_button_color` | col | buttons bg color when window isn't focused
 `on_double_click` | str | command to run on double click of the bar (not on a button)
+`autohide_bar` | bool | whether to autohide the bar when not hovering | `false`
+`autohide_delay_ms` | int | delay in milliseconds before hiding the bar after hover | `800`
+`autohide_trigger_ms` | int | time in milliseconds to trigger the bar on hover | `200`
+`autohide_margin_multiplier` | int | multiplier for the hover margin (bar_height * multiplier) | `3`
 
 ## Buttons Config
 
