@@ -163,7 +163,7 @@ void CHyprBar::onMouseMove(Vector2D coords) {
             const auto windowLeft = PWINDOW->m_realPosition->value().x;
             const auto windowRight = windowLeft + PWINDOW->m_realSize->value().x;
             
-            // Configurable hover area: multiplier x bar height for easier triggering
+            // Configurable hover area: multiplier * bar height for easier triggering
             const int marginMult = g_pGlobalState->config.autohideMarginMultiplier->value();
             const int hoverMargin = g_pGlobalState->config.barHeight->value() * marginMult;
             
