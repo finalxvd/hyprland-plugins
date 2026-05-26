@@ -232,6 +232,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pGlobalState->config.useWorkspaceOpacity =
         makeShared<Config::Values::CBoolValue>("plugin:hyprbars:use_workspace_opacity", "Whether to use workspace opacity instead of window opacity", true);
     g_pGlobalState->config.onDoubleClick       = makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
+    g_pGlobalState->config.autohideBar         = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:autohide_bar", "Whether to autohide the bar", false);
+    g_pGlobalState->config.autohideDelayMs     = makeShared<Config::Values::CIntValue>("plugin:hyprbars:autohide_delay_ms", "Delay in ms before hiding the bar after hover", 800);
+    g_pGlobalState->config.autohideTriggerMs   = makeShared<Config::Values::CIntValue>("plugin:hyprbars:autohide_trigger_ms", "Time in ms to trigger the bar on hover", 200);
+    g_pGlobalState->config.autohideMarginMultiplier = makeShared<Config::Values::CIntValue>("plugin:hyprbars:autohide_margin_multiplier", "Multiplier for the hover margin", 3);
 
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barColor);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.textColor);
@@ -252,6 +256,10 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.iconOnHover);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.useWorkspaceOpacity);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.onDoubleClick);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.autohideBar);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.autohideDelayMs);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.autohideTriggerMs);
+    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.autohideMarginMultiplier);
 
     if (Config::mgr()->type() == Config::CONFIG_LEGACY)
         HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});

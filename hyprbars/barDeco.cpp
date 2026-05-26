@@ -22,6 +22,7 @@
 #include "BarPassElement.hpp"
 
 #include <climits>
+#include <chrono>
 
 using namespace Render::GL;
 
@@ -59,7 +60,7 @@ SDecorationPositioningInfo CHyprBar::getPositioningInfo() {
     const auto                 PRECEDENCE = g_pGlobalState->config.barPrecedenceOverBorder->value();
     const auto                 PWINDOW    = m_pWindow.lock();
     const auto                 DECORATE   = PWINDOW ? PWINDOW->m_ruleApplicator->decorate().valueOrDefault() : true;
-    const bool                 SHOULDHIDE = m_hidden || !ENABLED || !DECORATE || !validMapped(m_pWindow);
+    const bool                 SHOULDHIDE = m_hidden || m_bAutohidden || !ENABLED || !DECORATE || !validMapped(m_pWindow);
 
     SDecorationPositioningInfo info;
     info.policy         = SHOULDHIDE ? DECORATION_POSITION_ABSOLUTE : DECORATION_POSITION_STICKY;
@@ -150,6 +151,41 @@ void CHyprBar::onMouseMove(Vector2D coords) {
     // ensure proper redraws of button icons on hover when using hardware cursors
     if (g_pGlobalState->config.iconOnHover->value())
         damageOnButtonHover();
+
+    const bool AUTOHIDE_ENABLED = g_pGlobalState->config.autohideBar->value();
+    
+    // Check if hovering over bar area for autohide
+    if (AUTOHIDE_ENABLED && shouldAutohide()) {
+        const auto PWINDOW = m_pWindow.lock();
+        if (PWINDOW && validMapped(PWINDOW)) {
+            const auto mouseGlobal = g_pInputManager->getMouseCoordsInternal();
+            const auto windowTop = PWINDOW->m_realPosition->value().y;
+            const auto windowLeft = PWINDOW->m_realPosition->value().x;
+            const auto windowRight = windowLeft + PWINDOW->m_realSize->value().x;
+            
+            // Configurable hover area: multiplier x bar height for easier triggering
+            const int marginMult = g_pGlobalState->config.autohideMarginMultiplier->value();
+            const int hoverMargin = g_pGlobalState->config.barHeight->value() * marginMult;
+            
+            // Hovering if within extended area from top of window
+            bool nowHovering = (mouseGlobal.y >= windowTop && 
+                               mouseGlobal.y <= windowTop + hoverMargin &&
+                               mouseGlobal.x >= windowLeft && 
+                               mouseGlobal.x <= windowRight);
+            
+            if (nowHovering != m_bHoveringBar) {
+                m_bHoveringBar = nowHovering;
+                if (nowHovering) {
+                    // Just entered hover area - record entry time
+                    m_tHoverEnter = std::chrono::steady_clock::now();
+                } else {
+                    // Just left hover area - record leave time
+                    m_tLastHoverLeave = std::chrono::steady_clock::now();
+                }
+                updateAutohideState();
+            }
+        }
+    }
 
     if (!m_bDragPending || m_bTouchEv || !validMapped(m_pWindow) || m_touchId != 0)
         return;
@@ -443,6 +479,12 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     if (!DECORATE)
         return;
 
+    // Update autohide state
+    updateAutohideState();
+
+    if (m_bAutohidden || !validMapped(m_pWindow))
+        return;
+
     float renderAlpha = a;
     if (g_pGlobalState->config.useWorkspaceOpacity->value() && PWINDOW->m_workspace && PWINDOW->m_workspace->m_alpha)
         renderAlpha = PWINDOW->m_workspace->m_alpha->value();
@@ -699,5 +741,86 @@ void CHyprBar::damageOnButtonHover() {
         }
 
         offset += BARBUTTONPADDING + b.size;
+    }
+}
+
+bool CHyprBar::shouldAutohide() {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return false;
+    
+    // Don't autohide if window is floating (windowed mode)
+    return !PWINDOW->m_isFloating;
+}
+
+void CHyprBar::updateAutohideState() {
+    const bool AUTOHIDE_ENABLED = g_pGlobalState->config.autohideBar->value();
+    
+    if (!AUTOHIDE_ENABLED)
+        return;
+    
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return;
+    
+    bool prevAutohidden = m_bAutohidden;
+    
+    // Check if we should autohide (not in floating/windowed mode)
+    if (shouldAutohide()) {
+        const auto delayMs = g_pGlobalState->config.autohideDelayMs->value();
+        const auto triggerMs = g_pGlobalState->config.autohideTriggerMs->value();
+        
+        if (m_bHoveringBar) {
+            // Currently hovering
+            if (m_bHoverTriggered) {
+                // Already triggered - keep showing
+                m_bAutohidden = false;
+            } else {
+                // Check if we've been hovering long enough to trigger
+                const auto timeSinceEnter = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - m_tHoverEnter).count();
+                
+                if (timeSinceEnter >= triggerMs) {
+                    // Hover time threshold reached - show bar
+                    m_bHoverTriggered = true;
+                    m_bAutohidden = false;
+                } else {
+                    // Still waiting for trigger time - keep hidden
+                    m_bAutohidden = true;
+                    // Request another update to check again
+                    damageEntire();
+                }
+            }
+        } else {
+            // Not hovering anymore
+            if (m_bHoverTriggered) {
+                // Bar was shown, now check delay time
+                const auto timeSinceLeave = std::chrono::duration_cast<std::chrono::milliseconds>(
+                    std::chrono::steady_clock::now() - m_tLastHoverLeave).count();
+                
+                if (timeSinceLeave < delayMs) {
+                    // Recently left hover area - keep visible
+                    m_bAutohidden = false;
+                    // Request another update soon to hide after delay
+                    damageEntire();
+                } else {
+                    // Time expired - hide bar and reset trigger
+                    m_bAutohidden = true;
+                    m_bHoverTriggered = false;
+                }
+            } else {
+                // Never triggered - stay hidden
+                m_bAutohidden = true;
+            }
+        }
+    } else {
+        // Don't autohide in floating mode
+        m_bAutohidden = false;
+        m_bHoverTriggered = false;
+    }
+    
+    // Request repositioning if state changed
+    if (prevAutohidden != m_bAutohidden) {
+        g_pDecorationPositioner->repositionDeco(this);
     }
 }
