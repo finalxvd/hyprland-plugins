@@ -155,9 +155,9 @@ void CHyprBar::onMouseMove(Vector2D coords) {
     const bool AUTOHIDE_ENABLED = g_pGlobalState->config.autohideBar->value();
     
     // Check if hovering over bar area for autohide
-    if (AUTOHIDE_ENABLED && shouldAutohide()) {
+    if (AUTOHIDE_ENABLED) {
         const auto PWINDOW = m_pWindow.lock();
-        if (PWINDOW && validMapped(PWINDOW)) {
+        if (PWINDOW && validMapped(PWINDOW) && !PWINDOW->m_isFloating) {
             const auto mouseGlobal = g_pInputManager->getMouseCoordsInternal();
             const auto windowTop = PWINDOW->m_realPosition->value().y;
             const auto windowLeft = PWINDOW->m_realPosition->value().x;
@@ -182,6 +182,7 @@ void CHyprBar::onMouseMove(Vector2D coords) {
                     // Just left hover area - record leave time
                     m_tLastHoverLeave = std::chrono::steady_clock::now();
                 }
+                // Update immediately to reflect hover state change
                 updateAutohideState();
             }
         }
@@ -787,8 +788,6 @@ void CHyprBar::updateAutohideState() {
                 } else {
                     // Still waiting for trigger time - keep hidden
                     m_bAutohidden = true;
-                    // Request another update to check again
-                    damageEntire();
                 }
             }
         } else {
@@ -801,8 +800,6 @@ void CHyprBar::updateAutohideState() {
                 if (timeSinceLeave < delayMs) {
                     // Recently left hover area - keep visible
                     m_bAutohidden = false;
-                    // Request another update soon to hide after delay
-                    damageEntire();
                 } else {
                     // Time expired - hide bar and reset trigger
                     m_bAutohidden = true;
