@@ -57,13 +57,16 @@ SDecorationPositioningInfo CHyprBar::getPositioningInfo() {
     const auto                 HEIGHT     = g_pGlobalState->config.barHeight->value();
     const auto                 ENABLED    = g_pGlobalState->config.enabled->value();
     const auto                 PRECEDENCE = g_pGlobalState->config.barPrecedenceOverBorder->value();
+    const auto                 PWINDOW    = m_pWindow.lock();
+    const auto                 DECORATE   = PWINDOW ? PWINDOW->m_ruleApplicator->decorate().valueOrDefault() : true;
+    const bool                 SHOULDHIDE = m_hidden || !ENABLED || !DECORATE || !validMapped(m_pWindow);
 
     SDecorationPositioningInfo info;
-    info.policy         = m_hidden ? DECORATION_POSITION_ABSOLUTE : DECORATION_POSITION_STICKY;
+    info.policy         = SHOULDHIDE ? DECORATION_POSITION_ABSOLUTE : DECORATION_POSITION_STICKY;
     info.edges          = DECORATION_EDGE_TOP;
     info.priority       = PRECEDENCE ? 10005 : 5000;
     info.reserved       = true;
-    info.desiredExtents = {{0, m_hidden || !ENABLED ? 0 : HEIGHT}, {0, 0}};
+    info.desiredExtents = {{0, SHOULDHIDE ? 0 : HEIGHT}, {0, 0}};
     return info;
 }
 
@@ -431,7 +434,13 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     if (!PWINDOW)
         return;
 
-    if (!PWINDOW->m_ruleApplicator->decorate().valueOrDefault())
+    const bool DECORATE = PWINDOW->m_ruleApplicator->decorate().valueOrDefault();
+    if (m_bLastDecorateState != DECORATE) {
+        m_bLastDecorateState = DECORATE;
+        g_pDecorationPositioner->repositionDeco(this);
+    }
+
+    if (!DECORATE)
         return;
 
     float renderAlpha = a;
@@ -591,6 +600,14 @@ eDecorationType CHyprBar::getDecorationType() {
 }
 
 void CHyprBar::updateWindow(PHLWINDOW pWindow) {
+    if (pWindow) {
+        const bool DECORATE = pWindow->m_ruleApplicator->decorate().valueOrDefault();
+        if (m_bLastDecorateState != DECORATE) {
+            m_bLastDecorateState = DECORATE;
+            g_pDecorationPositioner->repositionDeco(this);
+        }
+    }
+
     damageEntire();
 }
 
