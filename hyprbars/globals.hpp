@@ -38,6 +38,10 @@ struct SGlobalState {
         SP<Config::Values::CIntValue>        barButtonPadding;
         SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, useWorkspaceOpacity;
         SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick;
+        SP<Config::Values::CBoolValue>       autohideBar;
+        SP<Config::Values::CIntValue>        autohideDelayMs;
+        SP<Config::Values::CIntValue>        autohideTriggerMs;
+        SP<Config::Values::CIntValue>        autohideMarginMultiplier;
     } config;
 };
 

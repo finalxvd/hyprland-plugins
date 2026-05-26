@@ -78,6 +78,15 @@ class CHyprBar : public IHyprWindowDecoration {
 
     Vector2D                   cursorRelativeToBar();
 
+    bool                       m_bAutohidden = false;
+    bool                       m_bHoveringBar = false;
+    std::chrono::steady_clock::time_point m_tLastHoverLeave;
+    std::chrono::steady_clock::time_point m_tHoverEnter;
+    bool                       m_bHoverTriggered = false;
+    
+    bool shouldAutohide();
+    void updateAutohideState();
+
     void                       renderPass(PHLMONITOR, float const& a);
     void                       renderBarTitle(const Vector2D& bufferSize, const float scale);
     void renderBarButtons(CBox* barBox, const float scale, const float a);
