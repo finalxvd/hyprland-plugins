@@ -9,22 +9,17 @@ Instead of this:
 
 In my opinion, it looks a lot nicer opaque, it gives a lot more uniformity to the design of your rice :)
 
-# hyprland-plugins
+## hyprland-plugins
 
 This repo houses official plugins for Hyprland.
 
-# Plugin list
+## Plugin list
  - borders-plus-plus -> adds one or two additional borders to windows
  - csgo-vulkan-fix -> fixes custom resolutions on CS:GO with `-vulkan`
  - hyprbars -> adds title bars to windows
- - hyprexpo -> adds an expo-like workspace overview
  - hyprfocus -> flashfocus for hyprland
- - hyprscrolling -> adds a scrolling layout to hyprland
- - hyprtrails -> adds smooth trails behind moving windows
- - hyprwinwrap -> clone of xwinwrap, allows you to put any app as a wallpaper
- - xtra-dispatchers -> adds some new dispatchers
 
-# Install
+## Install
 > [!IMPORTANT]
 > hyprland-plugins only officially supports installation via `hyprpm`.
 > `hyprpm` automatically detects your hyprland version & installs only
@@ -32,7 +27,7 @@ This repo houses official plugins for Hyprland.
 > If you want the latest commits to hyprland-plugins, you need to use
 > `hyprland-git`.
 
-## Install with `hyprpm`
+### Install with `hyprpm`
 
 To install these plugins, from the command line run:
 ```bash
@@ -51,7 +46,7 @@ See the respective README's in the subdirectories for configuration options.
 
 See [the plugins wiki](https://wiki.hyprland.org/Plugins/Using-Plugins/#installing--using-plugins) and `hyprpm -h` for more details.
 
-## Install on Nix
+### Install on Nix
 
 To use these plugins, it's recommended that you are already using the
 [Hyprland flake](https://github.com/hyprwm/Hyprland).
@@ -99,7 +94,7 @@ with lib; let
   hypr-plugin-dir = pkgs.symlinkJoin {
     name = "hyrpland-plugins";
     paths = with hyprPluginPkgs; [
-      hyprexpo
+      hyprbars
       #...plugins
     ];
   };
@@ -113,11 +108,9 @@ And in `hyprland.conf`
 
 ```hyprlang
 # load all the plugins you installed
-exec-once = hyprctl plugin load "$HYPR_PLUGIN_DIR/lib/libhyprexpo.so"
+exec-once = hyprctl plugin load "$HYPR_PLUGIN_DIR/lib/libhyprbars.so"
 ```
 
-# Contributing
+## Contributing
 
 Feel free to open issues and MRs with fixes.
-
-If you want your plugin added here, contact vaxry beforehand.
