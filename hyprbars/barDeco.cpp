@@ -616,6 +616,7 @@ void CHyprBar::onConfigReloaded() {
     m_bTitleColorChanged = true;
     m_pTextTex           = nullptr;
 
+    updateRules();
     g_pDecorationPositioner->repositionDeco(this);
     damageEntire();
 }
