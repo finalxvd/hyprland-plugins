@@ -28,7 +28,7 @@ plugin {
 | property | type | description | default |
 | --- | --- | --- | --- |
 `enabled` | bool | whether to enable the bars |
-`use_workspace_opacity` | bool | whether to use workspace opacity instead of window opacity | `true`
+`use_workspace_opacity` | bool | whether to use workspace opacity for the bar while still respecting the window's effective alpha | `true`
 `bar_color` | color | bar's background color
 `bar_height` | int | bar's height | `15`
 `bar_blur` | bool | whether to blur the bar. Also requires the global blur to be enabled.

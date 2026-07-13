@@ -21,6 +21,7 @@
 #include "globals.hpp"
 #include "BarPassElement.hpp"
 
+#include <algorithm>
 #include <climits>
 #include <chrono>
 
@@ -488,7 +489,7 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
 
     float renderAlpha = a;
     if (g_pGlobalState->config.useWorkspaceOpacity->value() && PWINDOW->m_workspace && PWINDOW->m_workspace->m_alpha)
-        renderAlpha = PWINDOW->m_workspace->m_alpha->value();
+        renderAlpha = std::min(a, PWINDOW->m_workspace->m_alpha->value());
 
     auto data = CBarPassElement::SBarData{this, renderAlpha};
     g_pHyprRenderer->m_renderPass.add(makeUnique<CBarPassElement>(data));
