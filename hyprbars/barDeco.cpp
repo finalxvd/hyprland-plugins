@@ -12,11 +12,18 @@
 #include <hyprland/src/config/shared/parserUtils/ParserUtils.hpp>
 #include <hyprland/src/config/supplementary/executor/Executor.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
-#include <hyprland/src/managers/animation/AnimationManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
+
+#if __has_include(<hyprland/src/animation/AnimationManager.hpp>)
+#include <hyprland/src/animation/AnimationManager.hpp>
+#define HYPR_HAS_NEW_ANIMATION_MANAGER 1
+#else
+#include <hyprland/src/managers/animation/AnimationManager.hpp>
+#define HYPR_HAS_NEW_ANIMATION_MANAGER 0
+#endif
 
 #include "globals.hpp"
 #include "BarPassElement.hpp"
@@ -45,8 +52,13 @@ CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo& info) { onTouchMove(info, e); });
     m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo& info) { onMouseMove(c); });
 
+    #if HYPR_HAS_NEW_ANIMATION_MANAGER
+    Animation::mgr()->createAnimation(configColor(g_pGlobalState->config.barColor->value()), m_cRealBarColor, Config::animationTree()->getAnimationPropertyConfig("border"),
+                                      pWindow, AVARDAMAGE_NONE);
+    #else
     g_pAnimationManager->createAnimation(configColor(g_pGlobalState->config.barColor->value()), m_cRealBarColor, Config::animationTree()->getAnimationPropertyConfig("border"),
                                          pWindow, AVARDAMAGE_NONE);
+    #endif
     m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 }
 

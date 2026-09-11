@@ -17,6 +17,20 @@
 
 #include <algorithm>
 
+#if __has_include(<hyprland/src/desktop/state/WindowState.hpp>)
+#include <hyprland/src/desktop/state/WindowState.hpp>
+#define HYPR_HAS_WINDOW_STATE 1
+#else
+#define HYPR_HAS_WINDOW_STATE 0
+#endif
+
+#if __has_include(<hyprland/src/state/MonitorState.hpp>)
+#include <hyprland/src/state/MonitorState.hpp>
+#define HYPR_HAS_MONITOR_STATE 1
+#else
+#define HYPR_HAS_MONITOR_STATE 0
+#endif
+
 #include "barDeco.hpp"
 #include "globals.hpp"
 
@@ -62,7 +76,10 @@ static void onUpdateWindowRules(PHLWINDOW window) {
         return;
 
     (*BARIT)->updateRules();
-    window->updateWindowDecos();
+    if constexpr (requires { window->updateWindowData(); })
+        window->updateWindowData();
+    else
+        window->updateWindowDecos();
 }
 
 Hyprlang::CParseResult onNewButton(const char* K, const char* V) {
@@ -269,8 +286,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
 
     // add deco to existing windows
+    #if HYPR_HAS_WINDOW_STATE
+    for (auto& w : Desktop::windowState()->windows()) {
+    #else
     for (auto& w : g_pCompositor->m_windows) {
-        if (w->isHidden() || !w->m_isMapped)
+    #endif
+        if (w->isHidden() || !validMapped(w))
             continue;
 
         onNewWindow(w);
@@ -282,7 +303,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
+    #if HYPR_HAS_MONITOR_STATE
+    for (auto& m : State::monitorState()->monitors())
+    #else
     for (auto& m : g_pCompositor->m_monitors)
+    #endif
         m->m_scheduledRecalc = true;
 
     g_pHyprRenderer->m_renderPass.removeAllOfType("CBarPassElement");
