@@ -21,6 +21,12 @@ plugin {
 
         # cmd to run on double click of the bar
         on_double_click = hyprctl dispatch fullscreen 1
+
+        # autohide the bar on tiled windows until the cursor reaches the top edge
+        autohide_bar = true
+        autohide_delay_ms = 800
+        autohide_trigger_ms = 200
+        autohide_margin_multiplier = 3
     }
 }
 ```
@@ -28,7 +34,6 @@ plugin {
 | property | type | description | default |
 | --- | --- | --- | --- |
 `enabled` | bool | whether to enable the bars |
-`use_workspace_opacity` | bool | whether to use workspace opacity instead of window opacity | `true`
 `bar_color` | color | bar's background color
 `bar_height` | int | bar's height | `15`
 `bar_blur` | bool | whether to blur the bar. Also requires the global blur to be enabled.
@@ -44,12 +49,14 @@ plugin {
 `bar_padding` | int | left / right edge padding | `7`
 `bar_button_padding` | int | padding between the buttons | `5`
 `icon_on_hover` | bool | whether the icons show on mouse hovering over the buttons | `false`
+`buttons_on_hover` | bool | whether the buttons are only drawn while the cursor is over the bar | `false`
 `inactive_button_color` | col | buttons bg color when window isn't focused
 `on_double_click` | str | command to run on double click of the bar (not on a button)
-`autohide_bar` | bool | whether to autohide the bar when not hovering | `false`
-`autohide_delay_ms` | int | delay in milliseconds before hiding the bar after hover | `800`
-`autohide_trigger_ms` | int | time in milliseconds to trigger the bar on hover | `200`
-`autohide_margin_multiplier` | int | multiplier for the hover margin (bar_height * multiplier) | `3`
+`use_workspace_opacity` | bool | fade the bar together with the workspace instead of the individual window | `true`
+`autohide_bar` | bool | hide the bar on tiled windows until the cursor approaches the top edge (floating windows always keep their bar) | `false`
+`autohide_delay_ms` | int | delay in ms before hiding the bar again after the cursor leaves the reveal zone | `800`
+`autohide_trigger_ms` | int | time in ms the cursor must dwell in the reveal zone before the bar appears | `200`
+`autohide_margin_multiplier` | int | height of the reveal zone as a multiple of `bar_height` | `3`
 
 ## Buttons Config
 
@@ -79,7 +86,7 @@ hl.plugin.hyprbars.add_button({
     fg_color = "rgb(ffffff)",
     size = 10,
     icon = "X",
-    action = "hyprctl dispatch killactive",
+    action = "hyprctl dispatch 'hl.dsp.window.close()'",
 })
 
 hl.plugin.hyprbars.add_button({
@@ -87,7 +94,7 @@ hl.plugin.hyprbars.add_button({
     fg_color = "rgb(000000)",
     size = 10,
     icon = "_",
-    action = "hyprctl dispatch fullscreen 1",
+    action = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" })']],
 })
 ```
 

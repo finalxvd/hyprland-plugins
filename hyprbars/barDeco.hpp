@@ -13,6 +13,8 @@
 #include <hyprland/src/helpers/signal/Signal.hpp>
 #include "globals.hpp"
 
+#include <chrono>
+
 #define private public
 #include <hyprland/src/managers/input/InputManager.hpp>
 #undef private
@@ -66,6 +68,7 @@ class CHyprBar : public IHyprWindowDecoration {
     bool                       m_hidden             = false;
     bool                       m_bTitleColorChanged = false;
     bool                       m_bButtonHovered     = false;
+    bool                       m_bBarHovered        = false;
     bool                       m_bLastEnabledState  = false;
     bool                       m_bLastDecorateState = true;
     bool                       m_bWindowHasFocus    = false;
@@ -78,14 +81,15 @@ class CHyprBar : public IHyprWindowDecoration {
 
     Vector2D                   cursorRelativeToBar();
 
-    bool                       m_bAutohidden = false;
-    bool                       m_bHoveringBar = false;
-    std::chrono::steady_clock::time_point m_tLastHoverLeave;
+    // autohide
+    bool                                  m_bAutohidden     = false;
+    bool                                  m_bHoveringBar    = false;
+    bool                                  m_bHoverTriggered = false;
     std::chrono::steady_clock::time_point m_tHoverEnter;
-    bool                       m_bHoverTriggered = false;
-    
-    bool shouldAutohide();
-    void updateAutohideState();
+    std::chrono::steady_clock::time_point m_tLastHoverLeave;
+
+    bool                       shouldAutohide();
+    void                       updateAutohideState();
 
     void                       renderPass(PHLMONITOR, float const& a);
     void                       renderBarTitle(const Vector2D& bufferSize, const float scale);
@@ -115,6 +119,7 @@ class CHyprBar : public IHyprWindowDecoration {
     CHyprSignalListener m_pMouseMoveCallback;
 
     std::string         m_szLastTitle;
+    int                 m_iLastScaledTextSize = 0;
 
     bool                m_bDraggingThis  = false;
     bool                m_bTouchEv       = false;

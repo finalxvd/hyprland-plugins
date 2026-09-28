@@ -2,8 +2,14 @@
 
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/state/WindowState.hpp>
+#include <hyprland/src/desktop/state/LayerState.hpp>
+#include <hyprland/src/desktop/state/ViewHitTester.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
+#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+#include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/helpers/MiscFunctions.hpp>
+#include <hyprland/src/keybinds/Manager.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
 #include <hyprland/src/render/Renderer.hpp>
@@ -12,29 +18,22 @@
 #include <hyprland/src/config/shared/parserUtils/ParserUtils.hpp>
 #include <hyprland/src/config/supplementary/executor/Executor.hpp>
 #include <hyprland/src/config/shared/actions/ConfigActions.hpp>
+#include <hyprland/src/animation/AnimationManager.hpp>
 #include <hyprland/src/protocols/LayerShell.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/LayoutManager.hpp>
 #include <hyprland/src/render/OpenGL.hpp>
-
-#if __has_include(<hyprland/src/animation/AnimationManager.hpp>)
-#include <hyprland/src/animation/AnimationManager.hpp>
-#define HYPR_HAS_NEW_ANIMATION_MANAGER 1
-#else
-#include <hyprland/src/managers/animation/AnimationManager.hpp>
-#define HYPR_HAS_NEW_ANIMATION_MANAGER 0
-#endif
+#include <hyprland/src/state/MonitorState.hpp>
 
 #include "globals.hpp"
 #include "BarPassElement.hpp"
 
 #include <climits>
-#include <chrono>
 
 using namespace Render::GL;
 
 static CHyprColor configColor(Config::INTEGER color) {
-    return CHyprColor{static_cast<uint64_t>(color)};
+    return CHyprColor{sc<uint64_t>(color)};
 }
 
 CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
@@ -52,13 +51,8 @@ CHyprBar::CHyprBar(PHLWINDOW pWindow) : IHyprWindowDecoration(pWindow) {
     m_pTouchMoveCallback = Event::bus()->m_events.input.touch.motion.listen([&](ITouch::SMotionEvent e, Event::SCallbackInfo& info) { onTouchMove(info, e); });
     m_pMouseMoveCallback = Event::bus()->m_events.input.mouse.move.listen([&](Vector2D c, Event::SCallbackInfo& info) { onMouseMove(c); });
 
-    #if HYPR_HAS_NEW_ANIMATION_MANAGER
     Animation::mgr()->createAnimation(configColor(g_pGlobalState->config.barColor->value()), m_cRealBarColor, Config::animationTree()->getAnimationPropertyConfig("border"),
                                       pWindow, AVARDAMAGE_NONE);
-    #else
-    g_pAnimationManager->createAnimation(configColor(g_pGlobalState->config.barColor->value()), m_cRealBarColor, Config::animationTree()->getAnimationPropertyConfig("border"),
-                                         pWindow, AVARDAMAGE_NONE);
-    #endif
     m_cRealBarColor->setUpdateCallback([&](auto) { damageEntire(); });
 }
 
@@ -70,8 +64,9 @@ SDecorationPositioningInfo CHyprBar::getPositioningInfo() {
     const auto                 HEIGHT     = g_pGlobalState->config.barHeight->value();
     const auto                 ENABLED    = g_pGlobalState->config.enabled->value();
     const auto                 PRECEDENCE = g_pGlobalState->config.barPrecedenceOverBorder->value();
+
     const auto                 PWINDOW    = m_pWindow.lock();
-    const auto                 DECORATE   = PWINDOW ? PWINDOW->m_ruleApplicator->decorate().valueOrDefault() : true;
+    const bool                 DECORATE   = PWINDOW ? PWINDOW->m_ruleApplicator->decorate().valueOrDefault() : true;
     const bool                 SHOULDHIDE = m_hidden || m_bAutohidden || !ENABLED || !DECORATE || !validMapped(m_pWindow);
 
     SDecorationPositioningInfo info;
@@ -79,7 +74,7 @@ SDecorationPositioningInfo CHyprBar::getPositioningInfo() {
     info.edges          = DECORATION_EDGE_TOP;
     info.priority       = PRECEDENCE ? 10005 : 5000;
     info.reserved       = true;
-    info.desiredExtents = {{0, SHOULDHIDE ? 0 : HEIGHT}, {0, 0}};
+    info.desiredExtents = {{0, sc<int>(SHOULDHIDE ? 0 : HEIGHT)}, {0, 0}};
     return info;
 }
 
@@ -95,37 +90,38 @@ std::string CHyprBar::getDisplayName() {
 }
 
 bool CHyprBar::inputIsValid() {
-    if (!g_pGlobalState->config.enabled->value())
+    if (!g_pGlobalState->config.enabled->value() || m_hidden)
         return false;
 
-    if (!m_pWindow->m_workspace || !m_pWindow->m_workspace->isVisible() || !g_pInputManager->m_exclusiveLSes.empty() ||
-        (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->wlSurface()->resource())))
+    if (g_pSeatManager->m_seatGrab && !g_pSeatManager->m_seatGrab->accepts(m_pWindow->wlSurface()->resource()))
         return false;
 
-    const auto WINDOWATCURSOR = g_pCompositor->vectorToWindowUnified(g_pInputManager->getMouseCoordsInternal(),
-                                                                     Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+    const auto MOUSE    = g_pInputManager->getMouseCoordsInternal();
+    auto       PMONITOR = Desktop::focusState()->monitor();
 
-    auto       focusState = Desktop::focusState();
-    auto       window     = focusState->window();
-    auto       monitor    = focusState->monitor();
+    if (!PMONITOR)
+        return false;
+
+    Desktop::CViewHitTester hitTester{*Desktop::viewState()};
+
+    const auto              WINDOWATCURSOR = hitTester.windowAt(MOUSE, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
+
+    auto                    focusState = Desktop::focusState();
+    auto                    window     = focusState->window();
 
     if (WINDOWATCURSOR != m_pWindow && m_pWindow != window)
         return false;
 
-    // check if input is on top or overlay shell layers
-    auto     PMONITOR     = monitor;
     PHLLS    foundSurface = nullptr;
     Vector2D surfaceCoords;
 
-    // check top layer
-    g_pCompositor->vectorToLayerSurface(g_pInputManager->getMouseCoordsInternal(), &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP], &surfaceCoords, &foundSurface);
-
+    // Check Top Layer
+    hitTester.layerSurfaceAt(MOUSE, &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_TOP], &surfaceCoords, &foundSurface);
     if (foundSurface)
         return false;
-    // check overlay layer
-    g_pCompositor->vectorToLayerSurface(g_pInputManager->getMouseCoordsInternal(), &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], &surfaceCoords,
-                                        &foundSurface);
 
+    // Check Overlay Layer
+    hitTester.layerSurfaceAt(MOUSE, &PMONITOR->m_layerSurfaceLayers[ZWLR_LAYER_SHELL_V1_LAYER_OVERLAY], &surfaceCoords, &foundSurface);
     if (foundSurface)
         return false;
 
@@ -164,37 +160,48 @@ void CHyprBar::onMouseMove(Vector2D coords) {
     if (g_pGlobalState->config.iconOnHover->value())
         damageOnButtonHover();
 
-    const bool AUTOHIDE_ENABLED = g_pGlobalState->config.autohideBar->value();
-    
-    // Check if hovering over bar area for autohide
-    if (AUTOHIDE_ENABLED) {
+    // buttons_on_hover: the buttons only exist while the cursor is over the bar,
+    // so the whole bar has to be redrawn as the cursor crosses its edge.
+    if (g_pGlobalState->config.buttonsOnHover->value()) {
+        const auto BOX     = assignedBoxGlobal();
+        const auto COORDS  = cursorRelativeToBar();
+        const bool HOVERED = VECINRECT(COORDS, 0, 0, BOX.w, BOX.h);
+        if (HOVERED != m_bBarHovered) {
+            m_bBarHovered = HOVERED;
+            damageEntire();
+        }
+    }
+
+    // autohide: reveal the bar when the cursor enters a zone at the top of the window
+    if (g_pGlobalState->config.autohideBar->value()) {
         const auto PWINDOW = m_pWindow.lock();
-        if (PWINDOW && validMapped(PWINDOW) && !PWINDOW->m_isFloating) {
-            const auto mouseGlobal = g_pInputManager->getMouseCoordsInternal();
-            const auto windowTop = PWINDOW->m_realPosition->value().y;
-            const auto windowLeft = PWINDOW->m_realPosition->value().x;
-            const auto windowRight = windowLeft + PWINDOW->m_realSize->value().x;
-            
-            // Configurable hover area: multiplier * bar height for easier triggering
-            const int marginMult = g_pGlobalState->config.autohideMarginMultiplier->value();
-            const int hoverMargin = g_pGlobalState->config.barHeight->value() * marginMult;
-            
-            // Hovering if within extended area from top of window
-            bool nowHovering = (mouseGlobal.y >= windowTop && 
-                               mouseGlobal.y <= windowTop + hoverMargin &&
-                               mouseGlobal.x >= windowLeft && 
-                               mouseGlobal.x <= windowRight);
-            
+        if (PWINDOW && validMapped(PWINDOW) && !PWINDOW->isFloating()) {
+            const auto  mouseGlobal = g_pInputManager->getMouseCoordsInternal();
+            const auto  barHeight   = g_pGlobalState->config.barHeight->value();
+            const auto  WPOS        = PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+            const auto  WSIZE       = PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+
+            // When the bar is shown it reserves bar_height at the top, so the tiled window sits
+            // bar_height lower. Anchor the reveal zone to that reserved top edge (compensating for
+            // the shift) so the zone stays put whether the bar is currently shown or hidden -
+            // otherwise the window jumping on reveal makes the bar oscillate.
+            const auto  zoneTop     = WPOS.y - (m_bAutohidden ? 0.0 : sc<double>(barHeight));
+            const auto  windowLeft  = WPOS.x;
+            const auto  windowRight = windowLeft + WSIZE.x;
+
+            // reveal zone: marginMultiplier * bar_height tall, measured from the reserved top edge
+            const int   marginMult  = g_pGlobalState->config.autohideMarginMultiplier->value();
+            const int   hoverMargin = barHeight * marginMult;
+
+            const bool  nowHovering = mouseGlobal.y >= zoneTop && mouseGlobal.y <= zoneTop + hoverMargin && //
+                mouseGlobal.x >= windowLeft && mouseGlobal.x <= windowRight;
+
             if (nowHovering != m_bHoveringBar) {
                 m_bHoveringBar = nowHovering;
-                if (nowHovering) {
-                    // Just entered hover area - record entry time
+                if (nowHovering)
                     m_tHoverEnter = std::chrono::steady_clock::now();
-                } else {
-                    // Just left hover area - record leave time
+                else
                     m_tLastHoverLeave = std::chrono::steady_clock::now();
-                }
-                // Update immediately to reflect hover state change
                 updateAutohideState();
             }
         }
@@ -211,19 +218,15 @@ void CHyprBar::onTouchMove(Event::SCallbackInfo& info, ITouch::SMotionEvent e) {
     if (!m_bDragPending || !m_bTouchEv || !validMapped(m_pWindow) || e.touchID != m_touchId)
         return;
 
-    auto PMONITOR     = m_pWindow->m_monitor.lock();
-    PMONITOR          = PMONITOR ? PMONITOR : Desktop::focusState()->monitor();
-    const auto COORDS = Vector2D(PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x, PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y);
-
     if (!m_bDraggingThis) {
         // Initial setup for dragging a window.
-        g_pKeybindManager->m_dispatchers["setfloating"]("activewindow");
-        g_pKeybindManager->m_dispatchers["resizewindowpixel"]("exact 50% 50%,activewindow");
-        // pin it so you can change workspaces while dragging a window
-        g_pKeybindManager->m_dispatchers["pin"]("activewindow");
+        (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_ENABLE, m_pWindow.lock());
+        // Pin it so you can change workspaces while dragging a window
+        (void)Config::Actions::pinWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_ENABLE, m_pWindow.lock());
+
+        g_layoutManager->beginDragTarget(m_pWindow.lock()->layoutTarget(), MBIND_MOVE);
+        m_bDraggingThis = true;
     }
-    g_pKeybindManager->m_dispatchers["movewindowpixel"](std::format("exact {} {},activewindow", (int)(COORDS.x - (assignedBoxGlobal().w / 2)), (int)COORDS.y));
-    m_bDraggingThis = true;
 }
 
 void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch::SDownEvent> touchEvent) {
@@ -236,9 +239,15 @@ void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch:
     auto       COORDS = cursorRelativeToBar();
     if (m_bTouchEv) {
         ITouch::SDownEvent e        = touchEvent.value();
-        auto               PMONITOR = g_pCompositor->getMonitorFromName(!e.device->m_boundOutput.empty() ? e.device->m_boundOutput : "");
-        PMONITOR                    = PMONITOR ? PMONITOR : Desktop::focusState()->monitor();
-        COORDS = Vector2D(PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x, PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y) - assignedBoxGlobal().pos();
+        PHLMONITOR         PMONITOR = nullptr;
+        for (auto& m : State::monitorState()->monitors()) {
+            if (m->m_name == (!e.device->m_boundOutput.empty() ? e.device->m_boundOutput : "")) {
+                PMONITOR = m;
+                break;
+            }
+        }
+        PMONITOR = PMONITOR ? PMONITOR : Desktop::focusState()->monitor();
+        COORDS   = Vector2D(PMONITOR->m_position.x + e.pos.x * PMONITOR->m_size.x, PMONITOR->m_position.y + e.pos.y * PMONITOR->m_size.y) - assignedBoxGlobal().pos();
     }
 
     const auto HEIGHT           = g_pGlobalState->config.barHeight->value();
@@ -253,9 +262,9 @@ void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch:
 
         if (m_bDraggingThis) {
             if (m_bTouchEv)
-                g_pKeybindManager->m_dispatchers["settiled"]("activewindow");
-            g_pKeybindManager->m_dispatchers["mouse"]("0movewindow");
-            Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)PWINDOW.get());
+                (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_DISABLE);
+            g_layoutManager->endDragTarget();
+            LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)PWINDOW.get());
         }
 
         m_bDraggingThis = false;
@@ -264,11 +273,15 @@ void CHyprBar::handleDownEvent(Event::SCallbackInfo& info, std::optional<ITouch:
         return;
     }
 
+    // don't swallow clicks meant for xdg popups (e.g. context menus) overlapping the bar
+    if (PWINDOW->hasPopupAt(COORDS + assignedBoxGlobal().pos()))
+        return;
+
     if (Desktop::focusState()->window() != PWINDOW)
         Desktop::focusState()->fullWindowFocus(PWINDOW, Desktop::FOCUS_REASON_CLICK);
 
-    if (PWINDOW->m_isFloating)
-        g_pCompositor->changeWindowZOrder(PWINDOW, true);
+    if (PWINDOW->isFloating())
+        Desktop::windowState()->raise(PWINDOW);
 
     info.cancelled   = true;
     m_bCancelledDown = true;
@@ -296,12 +309,12 @@ void CHyprBar::handleUpEvent(Event::SCallbackInfo& info) {
     m_bCancelledDown = false;
 
     if (m_bDraggingThis) {
-        g_pKeybindManager->changeMouseBindMode(MBIND_INVALID);
+        g_layoutManager->endDragTarget();
         m_bDraggingThis = false;
         if (m_bTouchEv)
-            Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_DISABLE);
+            (void)Config::Actions::floatWindow(Config::Actions::eTogglableAction::TOGGLE_ACTION_DISABLE);
 
-        Log::logger->log(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
+        LOG(Log::DEBUG, "[hyprbars] Dragging ended on {:x}", (uintptr_t)m_pWindow.lock().get());
     }
 
     m_bDragPending = false;
@@ -310,9 +323,9 @@ void CHyprBar::handleUpEvent(Event::SCallbackInfo& info) {
 }
 
 void CHyprBar::handleMovement() {
-    g_pKeybindManager->changeMouseBindMode(MBIND_MOVE);
+    g_layoutManager->beginDragTarget(m_pWindow.lock()->layoutTarget(), MBIND_MOVE);
     m_bDraggingThis = true;
-    Log::logger->log(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
+    LOG(Log::DEBUG, "[hyprbars] Dragging initiated on {:x}", (uintptr_t)m_pWindow.lock().get());
     return;
 }
 
@@ -321,12 +334,12 @@ bool CHyprBar::doButtonPress(Config::INTEGER barPadding, Config::INTEGER barButt
     float offset = barPadding;
 
     for (auto& b : g_pGlobalState->buttons) {
-        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, barHeight};
+        const auto BARBUF     = Vector2D{assignedBoxGlobal().w, sc<double>(barHeight)};
         Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - barButtonPadding - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
 
         if (VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + barButtonPadding, currentPos.y + b.size)) {
             // hit on close
-            g_pKeybindManager->m_dispatchers["exec"](b.cmd);
+            Config::Supplementary::executor()->spawn(b.cmd);
             return true;
         }
 
@@ -353,7 +366,7 @@ void CHyprBar::renderBarTitle(const Vector2D& bufferSize, const float scale) {
     const auto scaledButtonsSize = buttonSizes * scale;
     const auto scaledBarPadding  = BARPADDING * scale;
     const int  paddingTotal      = scaledBarPadding * 2 + scaledButtonsSize + (ALIGN != "left" ? scaledButtonsSize : 0);
-    const int  maxWidth          = std::clamp(static_cast<int>(bufferSize.x - paddingTotal), 0, INT_MAX);
+    const int  maxWidth          = std::clamp(sc<int>(bufferSize.x - paddingTotal), 0, INT_MAX);
 
     if (m_szLastTitle.empty() || maxWidth < 1) {
         m_pTextTex = nullptr;
@@ -381,6 +394,9 @@ size_t CHyprBar::getVisibleButtonCount(Config::INTEGER barButtonPadding, Config:
 }
 
 void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a) {
+    if (g_pGlobalState->config.buttonsOnHover->value() && !m_bBarHovered)
+        return;
+
     const auto BARBUTTONPADDING = g_pGlobalState->config.barButtonPadding->value();
     const auto BARPADDING       = g_pGlobalState->config.barPadding->value();
     const auto ALIGNBUTTONS     = g_pGlobalState->config.barButtonsAlignment->value();
@@ -410,13 +426,16 @@ void CHyprBar::renderBarButtons(CBox* barBox, const float scale, const float a) 
                           scaledButtonSize};
         buttonBox.round();
 
-        g_pHyprOpenGL->renderRect(buttonBox, color, {.round = static_cast<int>(std::round(scaledButtonSize / 2.0)), .roundingPower = 2.F});
+        g_pHyprOpenGL->renderRect(buttonBox, color, {.round = sc<int>(std::round(scaledButtonSize / 2.0)), .roundingPower = 2.F});
 
         offset += scaledButtonsPad + scaledButtonSize;
     }
 }
 
 void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float a) {
+    if (g_pGlobalState->config.buttonsOnHover->value() && !m_bBarHovered)
+        return;
+
     const auto HEIGHT           = g_pGlobalState->config.barHeight->value();
     const auto BARBUTTONPADDING = g_pGlobalState->config.barButtonPadding->value();
     const auto BARPADDING       = g_pGlobalState->config.barPadding->value();
@@ -436,16 +455,19 @@ void CHyprBar::renderBarButtonsText(CBox* barBox, const float scale, const float
         const auto scaledButtonsPad = BARBUTTONPADDING * scale;
 
         // check if hovering here
-        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
+        const auto BARBUF     = Vector2D{assignedBoxGlobal().w, sc<double>(HEIGHT)};
         Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - button.size - noScaleOffset : noScaleOffset), (BARBUF.y - button.size) / 2.0}.floor();
         bool       hovering   = VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + button.size + BARBUTTONPADDING, currentPos.y + button.size);
         noScaleOffset += BARBUTTONPADDING + button.size;
 
-        if ((!button.iconTex || button.iconTex->m_texID == 0) && !button.icon.empty()) {
+        const bool NEEDICON = !button.icon.empty() && (!button.iconTex || button.iconTex->m_texID == 0 || !button.m_fIconScale.has_value() ||
+                                                      std::abs(button.m_fIconScale.value_or(0.F) - scale) > 1e-6);
+        if (NEEDICON) {
             // render icon
             auto fgcol = button.userfg ? button.fgcol : (button.bgcol.r + button.bgcol.g + button.bgcol.b < 1) ? CHyprColor(0xFFFFFFFF) : CHyprColor(0xFF000000);
 
-            button.iconTex = g_pHyprRenderer->renderText(button.icon, fgcol, std::round(button.size * 0.62 * scale), false, "sans", scaledButtonSize);
+            button.iconTex   = g_pHyprRenderer->renderText(button.icon, fgcol, std::round(button.size * 0.62 * scale), false, "sans", scaledButtonSize);
+            button.m_fIconScale = scale;
         }
 
         if (!button.iconTex || button.iconTex->m_texID == 0)
@@ -483,6 +505,7 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     if (!PWINDOW)
         return;
 
+    // reposition when the decorate rule flips (e.g. fullscreen) so reserved space is reclaimed
     const bool DECORATE = PWINDOW->m_ruleApplicator->decorate().valueOrDefault();
     if (m_bLastDecorateState != DECORATE) {
         m_bLastDecorateState = DECORATE;
@@ -492,9 +515,7 @@ void CHyprBar::draw(PHLMONITOR pMonitor, const float& a) {
     if (!DECORATE)
         return;
 
-    // Update autohide state
     updateAutohideState();
-
     if (m_bAutohidden || !validMapped(m_pWindow))
         return;
 
@@ -542,13 +563,13 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     }
 
     const auto PWORKSPACE      = PWINDOW->m_workspace;
-    const auto WORKSPACEOFFSET = PWORKSPACE && !PWINDOW->m_pinned ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+    const auto WORKSPACEOFFSET = PWORKSPACE && !(PWINDOW->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
 
-    const auto ROUNDING = PWINDOW->rounding() + (PRECEDENCE ? 0 : PWINDOW->getRealBorderSize());
+    const auto ROUNDING = PWINDOW->presentation().rounding() + (PRECEDENCE ? 0 : PWINDOW->presentation().borderSize());
 
     const auto scaledRounding = ROUNDING > 0 ? ROUNDING * pMonitor->m_scale - 2 /* idk why but otherwise it looks bad due to the gaps */ : 0;
 
-    m_seExtents = {{0, HEIGHT}, {}};
+    m_seExtents = {{0, sc<int>(HEIGHT)}, {}};
 
     const auto DECOBOX = assignedBoxGlobal();
 
@@ -557,7 +578,7 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     CBox       titleBarBox = {DECOBOX.x - pMonitor->m_position.x, DECOBOX.y - pMonitor->m_position.y, DECOBOX.w,
                               DECOBOX.h + ROUNDING * 3 /* to fill the bottom cuz we can't disable rounding there */};
 
-    titleBarBox.translate(PWINDOW->m_floatingOffset).scale(pMonitor->m_scale).round();
+    titleBarBox.translate(PWINDOW->presentation().floatingOffset()).scale(pMonitor->m_scale).round();
 
     if (titleBarBox.w < 1 || titleBarBox.h < 1)
         return;
@@ -566,9 +587,9 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
 
     if (ROUNDING) {
         // the +1 is a shit garbage temp fix until renderRect supports an alpha matte
-        CBox windowBox = {PWINDOW->m_realPosition->value().x + PWINDOW->m_floatingOffset.x - pMonitor->m_position.x + 1,
-                          PWINDOW->m_realPosition->value().y + PWINDOW->m_floatingOffset.y - pMonitor->m_position.y + 1, PWINDOW->m_realSize->value().x - 2,
-                          PWINDOW->m_realSize->value().y - 2};
+        CBox windowBox = {PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x + PWINDOW->presentation().floatingOffset().x - pMonitor->m_position.x + 1,
+                          PWINDOW->position(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y + PWINDOW->presentation().floatingOffset().y - pMonitor->m_position.y + 1,
+                          PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).x - 2, PWINDOW->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT).y - 2};
 
         if (windowBox.w < 1 || windowBox.h < 1)
             return;
@@ -584,7 +605,8 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
         glColorMask(GL_FALSE, GL_FALSE, GL_FALSE, GL_FALSE);
 
         windowBox.translate(WORKSPACEOFFSET).scale(pMonitor->m_scale).round();
-        g_pHyprOpenGL->renderRect(windowBox, CHyprColor(0, 0, 0, 0), {.round = scaledRounding, .roundingPower = m_pWindow->roundingPower()});
+        g_pHyprOpenGL->renderRect(windowBox, CHyprColor(0, 0, 0, 0),
+                                  CHyprOpenGLImpl::SRectRenderData{.round = sc<int>(scaledRounding), .roundingPower = m_pWindow->presentation().roundingPower()});
         glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
 
         glStencilFunc(GL_NOTEQUAL, 1, -1);
@@ -592,14 +614,20 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
     }
 
     if (SHOULDBLUR)
-        g_pHyprOpenGL->renderRect(titleBarBox, color, {.round = scaledRounding, .roundingPower = m_pWindow->roundingPower(), .blur = true, .blurA = color.a});
+        g_pHyprOpenGL->renderRect(
+            titleBarBox, color,
+            CHyprOpenGLImpl::SRectRenderData{.round = sc<int>(scaledRounding), .roundingPower = m_pWindow->presentation().roundingPower(), .blur = true, .blurA = a});
     else
-        g_pHyprOpenGL->renderRect(titleBarBox, color, {.round = scaledRounding, .roundingPower = m_pWindow->roundingPower()});
+        g_pHyprOpenGL->renderRect(titleBarBox, color,
+                                  CHyprOpenGLImpl::SRectRenderData{.round = sc<int>(scaledRounding), .roundingPower = m_pWindow->presentation().roundingPower()});
 
     // render title
-    if (ENABLETITLE && (m_szLastTitle != PWINDOW->m_title || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged)) {
-        m_szLastTitle = PWINDOW->m_title;
+    const int SCALEDTEXTSIZE = std::round(g_pGlobalState->config.barTextSize->value() * pMonitor->m_scale);
+    if (ENABLETITLE && (m_szLastTitle != PWINDOW->metadata().title() || m_bWindowSizeChanged || !m_pTextTex || m_pTextTex->m_texID == 0 || m_bTitleColorChanged ||
+                        m_iLastScaledTextSize != SCALEDTEXTSIZE)) {
+        m_szLastTitle = PWINDOW->metadata().title();
         renderBarTitle(BARBUF, pMonitor->m_scale);
+        m_iLastScaledTextSize = SCALEDTEXTSIZE;
     }
 
     if (ROUNDING) {
@@ -611,7 +639,7 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
         glStencilFunc(GL_ALWAYS, 1, 0xFF);
     }
 
-    CBox textBox = {titleBarBox.x, titleBarBox.y, (int)BARBUF.x, (int)BARBUF.y};
+    CBox textBox = {titleBarBox.x, titleBarBox.y, BARBUF.x, BARBUF.y};
     if (ENABLETITLE && m_pTextTex) {
         const auto BARPADDING       = g_pGlobalState->config.barPadding->value();
         const auto BARBUTTONPADDING = g_pGlobalState->config.barButtonPadding->value();
@@ -622,7 +650,7 @@ void CHyprBar::renderPass(PHLMONITOR pMonitor, const float& a) {
             buttonSizes += b.size + BARBUTTONPADDING;
         }
 
-        const auto scaledBorderSize  = PWINDOW->getRealBorderSize() * pMonitor->m_scale;
+        const auto scaledBorderSize  = PWINDOW->presentation().borderSize() * pMonitor->m_scale;
         const auto scaledButtonsSize = buttonSizes * pMonitor->m_scale;
         const auto scaledBarPadding  = BARPADDING * pMonitor->m_scale;
         const auto xOffset           = ALIGN == "left" ? std::round(scaledBarPadding + (BUTTONSRIGHT ? 0 : scaledButtonsSize)) :
@@ -655,14 +683,6 @@ eDecorationType CHyprBar::getDecorationType() {
 }
 
 void CHyprBar::updateWindow(PHLWINDOW pWindow) {
-    if (pWindow) {
-        const bool DECORATE = pWindow->m_ruleApplicator->decorate().valueOrDefault();
-        if (m_bLastDecorateState != DECORATE) {
-            m_bLastDecorateState = DECORATE;
-            g_pDecorationPositioner->repositionDeco(this);
-        }
-    }
-
     damageEntire();
 }
 
@@ -671,7 +691,6 @@ void CHyprBar::onConfigReloaded() {
     m_bTitleColorChanged = true;
     m_pTextTex           = nullptr;
 
-    updateRules();
     g_pDecorationPositioner->repositionDeco(this);
     damageEntire();
 }
@@ -682,6 +701,78 @@ void CHyprBar::damageEntire() {
 
 Vector2D CHyprBar::cursorRelativeToBar() {
     return g_pInputManager->getMouseCoordsInternal() - assignedBoxGlobal().pos();
+}
+
+bool CHyprBar::shouldAutohide() {
+    const auto PWINDOW = m_pWindow.lock();
+    if (!PWINDOW)
+        return false;
+
+    // only autohide tiled windows; floating windows keep their bar
+    return !PWINDOW->isFloating();
+}
+
+void CHyprBar::updateAutohideState() {
+    if (!g_pGlobalState->config.autohideBar->value()) {
+        // if autohide was just disabled, make sure a previously hidden bar comes back
+        if (m_bAutohidden) {
+            m_bAutohidden     = false;
+            m_bHoverTriggered = false;
+            damageEntire();
+            g_pDecorationPositioner->repositionDeco(this);
+        }
+        return;
+    }
+
+    if (!m_pWindow.lock())
+        return;
+
+    const bool prevAutohidden = m_bAutohidden;
+
+    if (shouldAutohide()) {
+        const auto delayMs   = g_pGlobalState->config.autohideDelayMs->value();
+        const auto triggerMs = g_pGlobalState->config.autohideTriggerMs->value();
+
+        if (m_bHoveringBar) {
+            if (m_bHoverTriggered) {
+                // already revealed, keep showing
+                m_bAutohidden = false;
+            } else {
+                // require a short dwell before revealing
+                const auto dwell = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_tHoverEnter).count();
+                if (dwell >= triggerMs) {
+                    m_bHoverTriggered = true;
+                    m_bAutohidden     = false;
+                } else
+                    m_bAutohidden = true;
+            }
+        } else {
+            if (m_bHoverTriggered) {
+                // grace period after the cursor leaves before hiding again
+                const auto since = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - m_tLastHoverLeave).count();
+                if (since < delayMs)
+                    m_bAutohidden = false;
+                else {
+                    m_bAutohidden     = true;
+                    m_bHoverTriggered = false;
+                }
+            } else
+                m_bAutohidden = true;
+        }
+    } else {
+        // never autohide floating windows
+        m_bAutohidden     = false;
+        m_bHoverTriggered = false;
+    }
+
+    if (prevAutohidden != m_bAutohidden) {
+        // Damage the region the bar currently occupies BEFORE the layout collapses,
+        // otherwise the just-hidden bar leaves a ghost until something else repaints it.
+        damageEntire();
+        g_pDecorationPositioner->repositionDeco(this);
+        // Damage again so the newly reserved/freed area is repainted cleanly.
+        damageEntire();
+    }
 }
 
 eDecorationLayer CHyprBar::getDecorationLayer() {
@@ -700,7 +791,7 @@ CBox CHyprBar::assignedBoxGlobal() {
     box.translate(g_pDecorationPositioner->getEdgeDefinedPoint(DECORATION_EDGE_TOP, m_pWindow.lock()));
 
     const auto PWORKSPACE      = m_pWindow->m_workspace;
-    const auto WORKSPACEOFFSET = PWORKSPACE && !m_pWindow->m_pinned ? PWORKSPACE->m_renderOffset->value() : Vector2D();
+    const auto WORKSPACEOFFSET = PWORKSPACE && !(m_pWindow->m_state & Desktop::View::WINDOW_STATE_PINNED) ? PWORKSPACE->m_renderOffset->value() : Vector2D();
 
     return box.translate(WORKSPACEOFFSET);
 }
@@ -743,7 +834,7 @@ void CHyprBar::damageOnButtonHover() {
     const auto COORDS = cursorRelativeToBar();
 
     for (auto& b : g_pGlobalState->buttons) {
-        const auto BARBUF     = Vector2D{(int)assignedBoxGlobal().w, HEIGHT};
+        const auto BARBUF     = Vector2D{assignedBoxGlobal().w, sc<double>(HEIGHT)};
         Vector2D   currentPos = Vector2D{(BUTTONSRIGHT ? BARBUF.x - BARBUTTONPADDING - b.size - offset : offset), (BARBUF.y - b.size) / 2.0}.floor();
 
         bool       hover = VECINRECT(COORDS, currentPos.x, currentPos.y, currentPos.x + b.size + BARBUTTONPADDING, currentPos.y + b.size);
@@ -754,82 +845,5 @@ void CHyprBar::damageOnButtonHover() {
         }
 
         offset += BARBUTTONPADDING + b.size;
-    }
-}
-
-bool CHyprBar::shouldAutohide() {
-    const auto PWINDOW = m_pWindow.lock();
-    if (!PWINDOW)
-        return false;
-    
-    // Don't autohide if window is floating (windowed mode)
-    return !PWINDOW->m_isFloating;
-}
-
-void CHyprBar::updateAutohideState() {
-    const bool AUTOHIDE_ENABLED = g_pGlobalState->config.autohideBar->value();
-    
-    if (!AUTOHIDE_ENABLED)
-        return;
-    
-    const auto PWINDOW = m_pWindow.lock();
-    if (!PWINDOW)
-        return;
-    
-    bool prevAutohidden = m_bAutohidden;
-    
-    // Check if we should autohide (not in floating/windowed mode)
-    if (shouldAutohide()) {
-        const auto delayMs = g_pGlobalState->config.autohideDelayMs->value();
-        const auto triggerMs = g_pGlobalState->config.autohideTriggerMs->value();
-        
-        if (m_bHoveringBar) {
-            // Currently hovering
-            if (m_bHoverTriggered) {
-                // Already triggered - keep showing
-                m_bAutohidden = false;
-            } else {
-                // Check if we've been hovering long enough to trigger
-                const auto timeSinceEnter = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - m_tHoverEnter).count();
-                
-                if (timeSinceEnter >= triggerMs) {
-                    // Hover time threshold reached - show bar
-                    m_bHoverTriggered = true;
-                    m_bAutohidden = false;
-                } else {
-                    // Still waiting for trigger time - keep hidden
-                    m_bAutohidden = true;
-                }
-            }
-        } else {
-            // Not hovering anymore
-            if (m_bHoverTriggered) {
-                // Bar was shown, now check delay time
-                const auto timeSinceLeave = std::chrono::duration_cast<std::chrono::milliseconds>(
-                    std::chrono::steady_clock::now() - m_tLastHoverLeave).count();
-                
-                if (timeSinceLeave < delayMs) {
-                    // Recently left hover area - keep visible
-                    m_bAutohidden = false;
-                } else {
-                    // Time expired - hide bar and reset trigger
-                    m_bAutohidden = true;
-                    m_bHoverTriggered = false;
-                }
-            } else {
-                // Never triggered - stay hidden
-                m_bAutohidden = true;
-            }
-        }
-    } else {
-        // Don't autohide in floating mode
-        m_bAutohidden = false;
-        m_bHoverTriggered = false;
-    }
-    
-    // Request repositioning if state changed
-    if (prevAutohidden != m_bAutohidden) {
-        g_pDecorationPositioner->repositionDeco(this);
     }
 }
