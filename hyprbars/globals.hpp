@@ -8,8 +8,6 @@
 #include <hyprland/src/config/values/types/ColorValue.hpp>
 #include <hyprland/src/config/values/types/FontWeightValue.hpp>
 
-#include <optional>
-
 inline HANDLE PHANDLE = nullptr;
 
 struct SHyprButton {
@@ -20,7 +18,6 @@ struct SHyprButton {
     float                size    = 10;
     std::string          icon    = "";
     SP<Render::ITexture> iconTex;
-    std::optional<float> m_fIconScale;
 };
 
 class CHyprBar;
@@ -39,7 +36,7 @@ struct SGlobalState {
         SP<Config::Values::CFontWeightValue> barTextWeight;
         SP<Config::Values::CIntValue>        barPadding;
         SP<Config::Values::CIntValue>        barButtonPadding;
-        SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, buttonsOnHover, useWorkspaceOpacity;
+        SP<Config::Values::CBoolValue>       barBlur, barTitleEnabled, barPartOfWindow, barPrecedenceOverBorder, enabled, iconOnHover, useWorkspaceOpacity;
         SP<Config::Values::CStringValue>     barTextFont, barTextAlign, barButtonsAlignment, onDoubleClick;
         SP<Config::Values::CBoolValue>       autohideBar;
         SP<Config::Values::CIntValue>        autohideDelayMs;

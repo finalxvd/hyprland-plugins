@@ -4,16 +4,18 @@
 
 #include <any>
 #include <hyprland/src/Compositor.hpp>
-#include <hyprland/src/desktop/view/window/Window.hpp>
-#include <hyprland/src/desktop/view/window/WindowPresentation.hpp>
+#include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/state/WindowState.hpp>
 #include <hyprland/src/config/ConfigManager.hpp>
+#include <hyprland/src/config/shared/parserUtils/ParserUtils.hpp>
 #include <hyprland/src/render/Renderer.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/desktop/rule/windowRule/WindowRuleEffectContainer.hpp>
 #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
 #include <hyprland/src/config/lua/types/LuaConfigColor.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
+
+#include <hyprutils/string/VarList.hpp>
 
 #include <algorithm>
 
@@ -31,11 +33,11 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 }
 
 static void onNewWindow(PHLWINDOW window) {
-    if (true) {
-        if (std::ranges::any_of(window->presentation().decorations(), [](const auto& d) { return d->getDisplayName() == "Hyprbar"; }))
+    if (!window->m_X11DoesntWantBorders) {
+        if (std::ranges::any_of(window->m_windowDecorations, [](const auto& d) { return d->getDisplayName() == "Hyprbar"; }))
             return;
 
-        auto bar = Hyprutils::Memory::makeShared<CHyprBar>(window);
+        auto bar = makeUnique<CHyprBar>(window);
         g_pGlobalState->bars.emplace_back(bar);
         bar->m_self = bar;
         HyprlandAPI::addWindowDecoration(PHANDLE, window, std::move(bar));
@@ -62,7 +64,56 @@ static void onUpdateWindowRules(PHLWINDOW window) {
         return;
 
     (*BARIT)->updateRules();
-    window->updateWindowData();
+    window->updateWindowDecos();
+}
+
+Hyprlang::CParseResult onNewButton(const char* K, const char* V) {
+    std::string                 v = V;
+    Hyprutils::String::CVarList vars(v);
+
+    Hyprlang::CParseResult      result;
+
+    // hyprbars-button = bgcolor, size, icon, action, fgcolor
+
+    if (vars[0].empty() || vars[1].empty()) {
+        result.setError("bgcolor and size cannot be empty");
+        return result;
+    }
+
+    float size = 10;
+    try {
+        size = std::stof(vars[1]);
+    } catch (std::exception& e) {
+        result.setError("failed to parse size");
+        return result;
+    }
+
+    bool userfg  = false;
+    auto fgcolor = Config::ParserUtils::parseColor("rgb(ffffff)");
+    auto bgcolor = Config::ParserUtils::parseColor(vars[0]);
+
+    if (!bgcolor) {
+        result.setError("invalid bgcolor");
+        return result;
+    }
+
+    if (vars.size() == 5) {
+        userfg  = true;
+        fgcolor = Config::ParserUtils::parseColor(vars[4]);
+    }
+
+    if (!fgcolor) {
+        result.setError("invalid fgcolor");
+        return result;
+    }
+
+    g_pGlobalState->buttons.push_back(SHyprButton{vars[3], userfg, *fgcolor, *bgcolor, size, vars[2]});
+
+    for (auto& b : g_pGlobalState->bars) {
+        b->m_bButtonsDirty = true;
+    }
+
+    return result;
 }
 
 int newLuaButton(lua_State* L) {
@@ -180,8 +231,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_pGlobalState->config.barButtonPadding    = makeShared<Config::Values::CIntValue>("plugin:hyprbars:bar_button_padding", "Padding of the bar buttons", 5);
     g_pGlobalState->config.enabled             = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:enabled", "Whether bars are enabled", true);
     g_pGlobalState->config.iconOnHover         = makeShared<Config::Values::CBoolValue>("plugin:hyprbars:icon_on_hover", "Whether to use an icon on hover of the buttons", false);
-    g_pGlobalState->config.buttonsOnHover      = makeShared<Config::Values::CBoolValue>(
-        "plugin:hyprbars:buttons_on_hover", "Whether the buttons are only drawn while the cursor is over the bar", false);
     g_pGlobalState->config.onDoubleClick       = makeShared<Config::Values::CStringValue>("plugin:hyprbars:on_double_click", "Action to execute on double click of the bar", "");
     g_pGlobalState->config.useWorkspaceOpacity =
         makeShared<Config::Values::CBoolValue>("plugin:hyprbars:use_workspace_opacity", "Whether to fade the bar with the workspace instead of the window", true);
@@ -208,7 +257,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.barButtonPadding);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.enabled);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.iconOnHover);
-    HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.buttonsOnHover);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.onDoubleClick);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.useWorkspaceOpacity);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.autohideBar);
@@ -216,14 +264,16 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.autohideTriggerMs);
     HyprlandAPI::addConfigValueV2(PHANDLE, g_pGlobalState->config.autohideMarginMultiplier);
 
-    HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "add_button", ::newLuaButton);
-
+    if (Config::mgr()->type() == Config::CONFIG_LEGACY)
+        HyprlandAPI::addConfigKeyword(PHANDLE, "plugin:hyprbars:hyprbars-button", onNewButton, Hyprlang::SHandlerOptions{});
+    else
+        HyprlandAPI::addLuaFunction(PHANDLE, "hyprbars", "add_button", ::newLuaButton);
     static auto P4 = Event::bus()->m_events.config.preReload.listen([&] { onPreConfigReload(); });
     static auto P5 = Event::bus()->m_events.config.reloaded.listen([&] { onConfigReloaded(); });
 
     // add deco to existing windows
     for (auto& w : Desktop::windowState()->windows()) {
-        if (w->isHidden() || !validMapped(w))
+        if (w->isHidden() || !w->m_isMapped)
             continue;
 
         onNewWindow(w);

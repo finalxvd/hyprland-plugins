@@ -49,7 +49,6 @@ plugin {
 `bar_padding` | int | left / right edge padding | `7`
 `bar_button_padding` | int | padding between the buttons | `5`
 `icon_on_hover` | bool | whether the icons show on mouse hovering over the buttons | `false`
-`buttons_on_hover` | bool | whether the buttons are only drawn while the cursor is over the bar | `false`
 `inactive_button_color` | col | buttons bg color when window isn't focused
 `on_double_click` | str | command to run on double click of the bar (not on a button)
 `use_workspace_opacity` | bool | fade the bar together with the workspace instead of the individual window | `true`
@@ -86,7 +85,7 @@ hl.plugin.hyprbars.add_button({
     fg_color = "rgb(ffffff)",
     size = 10,
     icon = "X",
-    action = "hyprctl dispatch 'hl.dsp.window.close()'",
+    action = "hyprctl dispatch killactive",
 })
 
 hl.plugin.hyprbars.add_button({
@@ -94,7 +93,7 @@ hl.plugin.hyprbars.add_button({
     fg_color = "rgb(000000)",
     size = 10,
     icon = "_",
-    action = [[hyprctl dispatch 'hl.dsp.window.fullscreen({ mode = "maximized", action = "toggle" })']],
+    action = "hyprctl dispatch fullscreen 1",
 })
 ```
 
